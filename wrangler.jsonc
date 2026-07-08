@@ -1,0 +1,18 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "convergence-gambit-mcp",
+  "main": "src/index.ts",
+  "compatibility_date": "2025-03-10",
+  "compatibility_flags": ["nodejs_compat"],
+  "durable_objects": {
+    "bindings": [
+      { "class_name": "ConvergenceGambitMCP", "name": "MCP_OBJECT" }
+    ]
+  },
+  "migrations": [
+    { "tag": "v1", "new_sqlite_classes": ["ConvergenceGambitMCP"] }
+  ],
+  "observability": { "enabled": true }
+  // Phase 3: add a custom domain route, e.g.
+  // "routes": [{ "pattern": "mcp.connoreaves.dev", "custom_domain": true }]
+}
