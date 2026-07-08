@@ -4,9 +4,11 @@ Bespoke, single-tenant MCP server connecting Claude to the campaign's
 LegendKeeper wiki. Two clients, one project, design philosophy baked into
 source. No multi-tenancy, no database, no apologies.
 
-**Current state: walking skeleton.** Authless, no LK API key, LegendKeeper
-calls backed by an in-memory fake seeded with campaign data. Its job is to
-prove the full path: Claude mobile app → custom connector → Cloudflare
+**Current state: walking skeleton, now behind GitHub OAuth.** No LK API key
+yet, LegendKeeper calls backed by an in-memory fake seeded with campaign
+data. Every tool now sits behind OAuth (see "Authentication" below) — only
+GitHub account `Kishotta` is ever issued a token. Its job is to prove the
+full path: Claude mobile app → custom connector → GitHub login → Cloudflare
 Worker → `LegendKeeperClient` seam.
 
 ## Skeleton toolset
@@ -35,11 +37,58 @@ Optional local verification before deploying:
 ```bash
 npx @modelcontextprotocol/inspector
 # connect to http://localhost:8787/mcp (Streamable HTTP)
+# Inspector will walk you through the GitHub login popup — see Authentication below
 ```
 
 Then on the phone: **Customize → Connectors → Add custom connector**, paste
-`https://convergence-gambit-mcp.<account>.workers.dev/mcp`, and ask Claude
-to `ping` and `list_resources`. If Morte comes back, the skeleton walks.
+`https://convergence-gambit-mcp.<account>.workers.dev/mcp`. Claude will
+prompt a GitHub login before the connector activates. Once connected, ask
+Claude to `ping` and `list_resources`. If Morte comes back, the skeleton
+walks.
+
+## Authentication
+
+Every tool sits behind GitHub OAuth (`@cloudflare/workers-oauth-provider` +
+a GitHub-OAuth `defaultHandler`, in `src/auth/`). No token is ever issued to
+any GitHub account other than `Kishotta` — the callback in
+`src/auth/github-handler.ts` rejects everyone else with a 403 before
+`completeAuthorization` is ever called. This is stricter than Cloudflare's
+own reference pattern (which authenticates any GitHub user and just hides
+extra tools) because the campaign data behind these tools is
+spoiler-sensitive, not just at mutation risk.
+
+**One-time setup**, before `wrangler dev` or `deploy` will work:
+
+1. Create **two** GitHub OAuth Apps at
+   [github.com/settings/developers](https://github.com/settings/developers)
+   → OAuth Apps → New OAuth App:
+   - **Dev**: Authorization callback URL `http://localhost:8787/callback`
+   - **Prod**: Authorization callback URL
+     `https://convergence-gambit-mcp.<account>.workers.dev/callback`
+     (or the custom domain, once phase 3 lands — a new callback URL is
+     needed on that cutover too)
+2. Create the KV namespace OAuthProvider needs for state + client-approval
+   storage (already done for this repo; re-run only if it's ever deleted):
+   ```bash
+   npx wrangler kv namespace create OAUTH_KV
+   # paste the resulting id into wrangler.jsonc's kv_namespaces binding
+   ```
+3. Local dev: copy `.dev.vars.example` to `.dev.vars` (gitignored) and fill
+   in the **dev** app's client id/secret, plus a random
+   `COOKIE_ENCRYPTION_KEY` (any random string — used to HMAC-sign the
+   client-approval cookie):
+   ```bash
+   node -e "console.log(crypto.randomUUID())"
+   ```
+4. Production secrets, from the **prod** app:
+   ```bash
+   npx wrangler secret put GITHUB_CLIENT_ID
+   npx wrangler secret put GITHUB_CLIENT_SECRET
+   npx wrangler secret put COOKIE_ENCRYPTION_KEY   # can reuse the dev value or generate a new one
+   ```
+
+Once all three secrets exist in both places, `npm run dev` / `wrangler
+deploy` work as before, just with GitHub login gating `/mcp` and `/sse`.
 
 > **Version drift note.** The `agents` package (Cloudflare's `McpAgent`)
 > moves fast. If `npm install` or `typecheck` complains, scaffold Cloudflare's

@@ -15,6 +15,16 @@
     "r2_buckets": [
         { "binding": "BACKUPS", "bucket_name": "convergence-gambit-backups" },
     ],
+    "kv_namespaces": [
+        { "binding": "OAUTH_KV", "id": "b64bf686a2dc407c982dccea2216988c" },
+    ],
+    /**
+     * Phase 2: GitHub OAuth (see src/auth/). Secrets, not checked in:
+     *   npx wrangler secret put GITHUB_CLIENT_ID
+     *   npx wrangler secret put GITHUB_CLIENT_SECRET
+     *   npx wrangler secret put COOKIE_ENCRYPTION_KEY
+     * Local dev reads the same three from .dev.vars (gitignored) instead.
+     */
     // Nightly at 09:00 UTC. Stubbed against the fake client (see
     // src/backup.ts) until whole-project export is confirmed on the real
     // LegendKeeper API — see SPEC-DRIFT CRITICAL UNKNOWN #3 in src/lk/types.ts.
