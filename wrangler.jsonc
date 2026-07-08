@@ -12,6 +12,15 @@
     "migrations": [
         { "tag": "v1", "new_sqlite_classes": ["ConvergenceGambitMCP"] },
     ],
+    "r2_buckets": [
+        { "binding": "BACKUPS", "bucket_name": "convergence-gambit-backups" },
+    ],
+    // Nightly at 09:00 UTC. Stubbed against the fake client (see
+    // src/backup.ts) until whole-project export is confirmed on the real
+    // LegendKeeper API — see SPEC-DRIFT CRITICAL UNKNOWN #3 in src/lk/types.ts.
+    "triggers": {
+        "crons": ["0 9 * * *"],
+    },
     "observability": { "enabled": true },
     // Phase 3: add a custom domain route, e.g.
     // "routes": [{ "pattern": "mcp.connoreaves.dev", "custom_domain": true }]

@@ -97,6 +97,24 @@ export interface CreateDocumentInput {
 export type UpdateDocumentPatch = Partial<CreateDocumentInput>;
 
 // ---------------------------------------------------------------------------
+// Backups
+// ---------------------------------------------------------------------------
+
+export interface ProjectSnapshot {
+    /** ISO timestamp of when the export was taken. */
+    exportedAt: string;
+    /**
+     * SPEC-DRIFT (CRITICAL UNKNOWN #3): does the API expose a whole-project
+     * export endpoint at all, and if so in what shape (a single JSON blob? a
+     * zip of per-resource documents? something else)? Unconfirmed as of
+     * writing — nightly backups (src/backup.ts) are stubbed against this
+     * method so the R2 storage + retention path can be proven today with
+     * fake data, ready to wire up the moment the real endpoint is known.
+     */
+    data: unknown;
+}
+
+// ---------------------------------------------------------------------------
 // The client seam
 // ---------------------------------------------------------------------------
 
@@ -127,4 +145,7 @@ export interface LegendKeeperClient {
         documentId: string,
         patch: UpdateDocumentPatch,
     ): Promise<LKDocument>;
+
+    /** See `ProjectSnapshot` — SPEC-DRIFT CRITICAL UNKNOWN #3. */
+    exportProject(): Promise<ProjectSnapshot>;
 }

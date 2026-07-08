@@ -67,6 +67,29 @@ call in `index.ts`. Tools never change at cutover.
 Speculative type fields are tagged `SPEC-DRIFT` — grep for them when the
 real docs land.
 
+## Nightly backups (stub)
+
+A cron trigger (`0 9 * * *` in `wrangler.jsonc`) calls `src/backup.ts`
+nightly, which exports the project via `LegendKeeperClient.exportProject()`
+and writes a snapshot to the `BACKUPS` R2 bucket (`convergence-gambit-backups`),
+pruning anything older than 30 days.
+
+Whether the real LegendKeeper API can export a whole project at all is
+unconfirmed (`SPEC-DRIFT` **CRITICAL UNKNOWN #3** in `src/lk/types.ts`) —
+today this runs against the fake client, which proves the R2 storage and
+retention path end-to-end with fake data. When the real answer is known,
+only `src/lk/client.ts` needs to change.
+
+One-time setup before this can deploy: R2 must be enabled on the Cloudflare
+account (dashboard only, not scriptable), then create the bucket:
+
+```bash
+npx wrangler r2 bucket create convergence-gambit-backups
+```
+
+To exercise the cron locally, with `npm run dev` already running:
+`curl "http://localhost:8787/cdn-cgi/handler/scheduled"`.
+
 ## Phases
 
 1. **Walking skeleton** _(this repo)_ — authless, fake-backed, deployed,

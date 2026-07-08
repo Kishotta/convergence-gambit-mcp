@@ -26,20 +26,28 @@ Manual verification: `npx @modelcontextprotocol/inspector`, connect to `http://l
 
 Everything meaningful lives behind one interface, `LegendKeeperClient` (`src/lk/types.ts`):
 
-- `src/lk/types.ts` — the `LegendKeeperClient` interface plus all LK domain types (Resource, Document, Property, write inputs).
+- `src/lk/types.ts` — the `LegendKeeperClient` interface plus all LK domain types (Resource, Document, Property, write inputs, `ProjectSnapshot`).
 - `src/lk/fake.ts` — `FakeLegendKeeperClient`, an in-memory implementation seeded with a slice of real campaign data. State lives only for the Durable Object instance's lifetime.
+- `src/lk/client.ts` — `createLegendKeeperClient()`, the single construction point for the seam. Both `src/index.ts` and `src/backup.ts` get their client from here.
 - `src/index.ts` — the `ConvergenceGambitMCP` McpAgent and its tools. Tools talk **only** to the `LegendKeeperClient` interface, never to the fake directly by type.
 
-When the real LegendKeeper API ships, a new `src/lk/http.ts` will implement `LegendKeeperClient` against the v2 endpoints, and exactly one constructor call in `index.ts` (`private lk: LegendKeeperClient = new FakeLegendKeeperClient()`) changes. No tool logic should change at that cutover — if a change to a tool requires touching the fake's internals, something has leaked across the seam.
+When the real LegendKeeper API ships, a new `src/lk/http.ts` will implement `LegendKeeperClient` against the v2 endpoints, and exactly one line in `src/lk/client.ts` changes. No tool logic — nor `src/backup.ts` — should change at that cutover — if a change requires touching the fake's internals, something has leaked across the seam.
 
 ### Domain types are speculative — grep for SPEC-DRIFT
 
-`src/lk/types.ts` was derived from a pre-release API docs screenshot. Every field whose shape is guessed is tagged `SPEC-DRIFT` in a comment. Two are called out as critical unknowns to verify the day real docs land:
+`src/lk/types.ts` was derived from a pre-release API docs screenshot. Every field whose shape is guessed is tagged `SPEC-DRIFT` in a comment. Three are called out as critical unknowns to verify the day real docs land:
 
 1. **Does the API expose the visibility model** (`Resource.secret` / `DocumentSummary.secret`)? The entire architecture charter (see below) depends on element/tab/block secrecy. If the real API has no such field, every write tool must loudly warn that a manual secrecy pass is required — never silently publish spoilers.
 2. **What format do `page` documents accept** for `LKDocument.content`? Assumed to be ProseMirror-style JSON, not markdown. Kept as `unknown` until confirmed; the eventual markdown→LK converter targets whatever this turns out to be.
+3. **Does the API expose a whole-project export?** Unconfirmed — `LegendKeeperClient.exportProject()` and nightly backups (below) are stubbed against it.
 
 When the real API lands, grep for `SPEC-DRIFT` and reconcile each tagged field before trusting it.
+
+### Nightly backups (`src/backup.ts`)
+
+A cron trigger (`triggers.crons` in `wrangler.jsonc`, currently `0 9 * * *`) invokes the Worker's `scheduled` handler in `src/index.ts`, which calls `runNightlyBackup(env)`. That function calls `LegendKeeperClient.exportProject()` (SPEC-DRIFT #3 above), writes the resulting `ProjectSnapshot` to the `BACKUPS` R2 bucket under `snapshots/YYYY-MM-DD.json`, and prunes anything older than 30 days (`RETENTION_DAYS` in `src/backup.ts`).
+
+This is intentionally stubbed against the fake client — whether whole-project export is even possible on the real API is unknown, so the goal right now is only to prove the R2 write + retention-prune path, not to produce a real usable backup. Requires the `convergence-gambit-backups` R2 bucket to exist (already created; R2 must be enabled on the Cloudflare account via the dashboard, then `npx wrangler r2 bucket create convergence-gambit-backups`) before `wrangler dev` or `deploy` will work. To exercise the cron locally, with `npm run dev` running: `curl "http://localhost:8787/cdn-cgi/handler/scheduled"` — confirmed working end-to-end against the fake client and local R2 emulation.
 
 ### The charter (`src/charter.ts`)
 
@@ -51,7 +59,7 @@ Tools are registered in `ConvergenceGambitMCP.init()` via `this.server.tool(name
 
 ### Env / secrets
 
-`Env` in `src/index.ts` currently only declares `MCP_OBJECT` (the Durable Object binding). Do **not** add `LK_API_KEY` or similar as a Worker secret until OAuth is implemented (README phase 2) — this skeleton is deliberately authless, and adding real credentials before auth exists is a live security concern, not just a TODO.
+`Env` in `src/index.ts` declares `MCP_OBJECT` (the Durable Object binding) and `BACKUPS` (the R2 bucket binding for nightly backups). Do **not** add `LK_API_KEY` or similar as a Worker secret until OAuth is implemented (README phase 2) — this skeleton is deliberately authless, and adding real credentials before auth exists is a live security concern, not just a TODO.
 
 ## Version drift note
 

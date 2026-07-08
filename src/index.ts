@@ -21,11 +21,14 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 
 import { ARCHITECTURE_CHARTER } from "./charter";
-import { FakeLegendKeeperClient } from "./lk/fake";
+import { runNightlyBackup } from "./backup";
+import { createLegendKeeperClient } from "./lk/client";
 import type { LegendKeeperClient } from "./lk/types";
 
 interface Env {
     MCP_OBJECT: DurableObjectNamespace;
+    /** Nightly project-snapshot backups — see src/backup.ts. */
+    BACKUPS: R2Bucket;
     // Phase 2, after OAuth: LK_API_KEY: string; LK_PROJECT_ID: string;
 }
 
@@ -39,7 +42,7 @@ export class ConvergenceGambitMCP extends McpAgent<Env> {
      * The seam. Swap FakeLegendKeeperClient for the real HTTP client when
      * the API ships; every tool above this line is untouched at cutover.
      */
-    private lk: LegendKeeperClient = new FakeLegendKeeperClient();
+    private lk: LegendKeeperClient = createLegendKeeperClient();
 
     async init() {
         this.server.tool(
@@ -120,5 +123,9 @@ export default {
             "The Convergence Gambit MCP server. Nothing is true until you tell the players.",
             { status: 404 },
         );
+    },
+
+    scheduled(controller: ScheduledController, env: Env, ctx: ExecutionContext) {
+        ctx.waitUntil(runNightlyBackup(env));
     },
 };

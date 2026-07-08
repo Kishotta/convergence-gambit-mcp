@@ -12,6 +12,7 @@ import type {
     CreateResourceInput,
     LegendKeeperClient,
     LKDocument,
+    ProjectSnapshot,
     Resource,
     ResourceSummary,
     UpdateDocumentPatch,
@@ -171,5 +172,14 @@ export class FakeLegendKeeperClient implements LegendKeeperClient {
         const doc = await this.getDocument(resourceId, documentId);
         Object.assign(doc, patch);
         return doc;
+    }
+
+    async exportProject(): Promise<ProjectSnapshot> {
+        return {
+            exportedAt: new Date().toISOString(),
+            data: {
+                resources: [...this.rows.values()].map((row) => row.resource),
+            },
+        };
     }
 }
