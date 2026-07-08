@@ -29,7 +29,7 @@ npm install
 npx wrangler login        # opens browser, authorizes wrangler
 npm run typecheck         # sanity check
 npm run dev               # local server at http://localhost:8787/mcp
-npm run deploy            # → https://convergence-gambit-mcp.<account>.workers.dev
+npx wrangler deploy       # → https://convergence-gambit-mcp.<account>.workers.dev
 ```
 
 Optional local verification before deploying:
@@ -90,6 +90,26 @@ spoiler-sensitive, not just at mutation risk.
 Once all three secrets exist in both places, `npm run dev` / `wrangler
 deploy` work as before, just with GitHub login gating `/mcp` and `/sse`.
 
+> **Two different "Client ID"s — don't cross them.** This tripped us up on
+> first deploy. There are two unrelated OAuth relationships stacked here:
+>
+> | | Who authenticates to whom | Where the credential lives |
+> |---|---|---|
+> | GitHub OAuth App | our Worker → github.com | `wrangler secret put GITHUB_CLIENT_ID` / `_SECRET` — never touched by Claude |
+> | This server's own OAuth clients | Claude → our Worker | auto-registered by Claude itself via `/register` (RFC 7591) — nobody ever types this in |
+>
+> When adding the custom connector in Claude, enter **only the server URL**
+> and leave any Client ID / Client Secret fields blank. If you paste the
+> GitHub OAuth App's credentials into Claude's connector setup, `/authorize`
+> will fail with `Invalid client. The clientId provided does not match to
+> this client.` (thrown by `@cloudflare/workers-oauth-provider` when it
+> can't find that client_id in `OAUTH_KV` — because it was never registered
+> there in the first place). Also: Worker secrets and KV are different
+> storage systems — don't add `GITHUB_CLIENT_ID` etc. as KV key-value pairs
+> in the `OAUTH_KV` namespace's dashboard browser; `wrangler secret put` (or
+> the dashboard's Variables & Secrets tab) is the only thing that actually
+> reaches `env.GITHUB_CLIENT_ID` in the Worker.
+
 > **Version drift note.** The `agents` package (Cloudflare's `McpAgent`)
 > moves fast. If `npm install` or `typecheck` complains, scaffold Cloudflare's
 > current authless remote-MCP template into a scratch directory
@@ -141,12 +161,11 @@ To exercise the cron locally, with `npm run dev` already running:
 
 ## Phases
 
-1. **Walking skeleton** _(this repo)_ — authless, fake-backed, deployed,
+1. **Walking skeleton** _(done)_ — authless, fake-backed, deployed,
    connected from the phone.
-2. **Auth** — before any real credentials enter the Worker. Claude's custom
-   connectors support OAuth only (no static bearer tokens, no keys in
-   URLs), so: adopt the GitHub-OAuth remote-MCP template pattern, allowlist
-   Connor's GitHub account, then and only then
+2. **Auth** _(done)_ — GitHub OAuth in front of every tool (see
+   "Authentication" above), allowlisted to `Kishotta` only. Only now, with
+   auth in place, is it safe to move on to real LegendKeeper credentials:
    `npx wrangler secret put LK_API_KEY` / `LK_PROJECT_ID`.
 3. **Custom domain** — point `connoreaves.dev` (or `kishotta.com`) DNS at
    Cloudflare, uncomment the route in `wrangler.jsonc`, redeploy to
