@@ -175,6 +175,12 @@ To exercise the cron locally, with `npm run dev` already running:
    `stage_reveal`, the markdown→LK converter. Designed only after phase 4
    confirms the two critical unknowns.
 
+Phases 4 and 5 both trigger on the same event (LegendKeeper publishing the
+v2 API docs) and are the reason this repo currently has nothing left to do
+— see [`docs/real-api-cutover.md`](docs/real-api-cutover.md) for the full
+runbook for that day, written up in advance so it isn't reconstructed from
+scratch later.
+
 ## The two critical unknowns (verify the day the docs drop)
 
 1. **Does the API expose the visibility model?** Element/tab/block secrecy
