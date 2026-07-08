@@ -11,12 +11,12 @@ Worker → `LegendKeeperClient` seam.
 
 ## Skeleton toolset
 
-| Tool | Purpose |
-|---|---|
-| `ping` | Proves the transport. |
-| `get_charter` | Serves the Architecture & Presentation Charter verbatim. |
-| `list_resources` | Proves the client seam (fake-backed). |
-| `get_resource` | Proves parameterized reads. |
+| Tool             | Purpose                                                  |
+| ---------------- | -------------------------------------------------------- |
+| `ping`           | Proves the transport.                                    |
+| `get_charter`    | Serves the Architecture & Presentation Charter verbatim. |
+| `list_resources` | Proves the client seam (fake-backed).                    |
+| `get_resource`   | Proves parameterized reads.                              |
 
 ## Setup (day one)
 
@@ -69,7 +69,7 @@ real docs land.
 
 ## Phases
 
-1. **Walking skeleton** *(this repo)* — authless, fake-backed, deployed,
+1. **Walking skeleton** _(this repo)_ — authless, fake-backed, deployed,
    connected from the phone.
 2. **Auth** — before any real credentials enter the Worker. Claude's custom
    connectors support OAuth only (no static bearer tokens, no keys in

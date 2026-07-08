@@ -1,21 +1,20 @@
 {
-  "name": "convergence-gambit-mcp",
-  "version": "0.1.0",
-  "private": true,
-  "description": "Bespoke MCP server for The Convergence Gambit's LegendKeeper wiki.",
-  "scripts": {
-    "dev": "wrangler dev",
-    "deploy": "wrangler deploy",
-    "typecheck": "tsc --noEmit"
-  },
-  "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.29.0",
-    "agents": "^0.17.3",
-    "zod": "^4.0.0"
-  },
-  "devDependencies": {
-    "@cloudflare/workers-types": "^5.20260706.1",
-    "typescript": "^5.5.0",
-    "wrangler": "^4.108.0"
-  }
+    "name": "convergence-gambit-mcp",
+    "version": "0.1.0",
+    "private": true,
+    "description": "Bespoke MCP server for The Convergence Gambit's LegendKeeper wiki.",
+    "scripts": {
+        "dev": "wrangler dev",
+        "typecheck": "tsc --noEmit"
+    },
+    "dependencies": {
+        "@modelcontextprotocol/sdk": "^1.29.0",
+        "agents": "^0.17.3",
+        "zod": "^4.0.0"
+    },
+    "devDependencies": {
+        "@cloudflare/workers-types": "^5.20260706.1",
+        "typescript": "^5.5.0",
+        "wrangler": "^4.108.0"
+    }
 }

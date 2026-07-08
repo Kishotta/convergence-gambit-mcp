@@ -25,86 +25,100 @@ import { FakeLegendKeeperClient } from "./lk/fake";
 import type { LegendKeeperClient } from "./lk/types";
 
 interface Env {
-  MCP_OBJECT: DurableObjectNamespace;
-  // Phase 2, after OAuth: LK_API_KEY: string; LK_PROJECT_ID: string;
+    MCP_OBJECT: DurableObjectNamespace;
+    // Phase 2, after OAuth: LK_API_KEY: string; LK_PROJECT_ID: string;
 }
 
 export class ConvergenceGambitMCP extends McpAgent<Env> {
-  server = new McpServer({
-    name: "The Convergence Gambit",
-    version: "0.1.0",
-  });
+    server = new McpServer({
+        name: "The Convergence Gambit",
+        version: "0.1.0",
+    });
 
-  /**
-   * The seam. Swap FakeLegendKeeperClient for the real HTTP client when
-   * the API ships; every tool above this line is untouched at cutover.
-   */
-  private lk: LegendKeeperClient = new FakeLegendKeeperClient();
+    /**
+     * The seam. Swap FakeLegendKeeperClient for the real HTTP client when
+     * the API ships; every tool above this line is untouched at cutover.
+     */
+    private lk: LegendKeeperClient = new FakeLegendKeeperClient();
 
-  async init() {
-    this.server.tool(
-      "ping",
-      "Health check. Returns a signature line proving the Convergence Gambit MCP server is alive.",
-      {},
-      async () => text("The Lady's shadow falls across the skeleton, and it walks. (pong)"),
-    );
+    async init() {
+        this.server.tool(
+            "ping",
+            "Health check. Returns a signature line proving the Convergence Gambit MCP server is alive.",
+            {},
+            async () =>
+                text(
+                    "The Lady's shadow falls across the skeleton, and it walks. (pong)",
+                ),
+        );
 
-    this.server.tool(
-      "get_charter",
-      "Returns the LegendKeeper Architecture & Presentation Charter — the authoritative " +
-        "conventions for how Convergence Gambit wiki articles are organized, layered for " +
-        "two audiences, and written. Consult before creating or restructuring any article.",
-      {},
-      async () => text(ARCHITECTURE_CHARTER),
-    );
+        this.server.tool(
+            "get_charter",
+            "Returns the LegendKeeper Architecture & Presentation Charter — the authoritative " +
+                "conventions for how Convergence Gambit wiki articles are organized, layered for " +
+                "two audiences, and written. Consult before creating or restructuring any article.",
+            {},
+            async () => text(ARCHITECTURE_CHARTER),
+        );
 
-    this.server.tool(
-      "list_resources",
-      "Lists all wiki articles (LegendKeeper resources) in the Convergence Gambit project: " +
-        "id, name, parent, tags, aliases. Currently backed by an in-memory fake with seed data.",
-      {},
-      async () => json(await this.lk.listResources()),
-    );
+        this.server.tool(
+            "list_resources",
+            "Lists all wiki articles (LegendKeeper resources) in the Convergence Gambit project: " +
+                "id, name, parent, tags, aliases. Currently backed by an in-memory fake with seed data.",
+            {},
+            async () => json(await this.lk.listResources()),
+        );
 
-    this.server.tool(
-      "get_resource",
-      "Fetches a single wiki article by resource id, including its document tabs.",
-      { resourceId: z.string().describe("The resource id, e.g. res_101") },
-      async ({ resourceId }) => {
-        try {
-          return json(await this.lk.getResource(resourceId));
-        } catch (err) {
-          return text(`Error: ${err instanceof Error ? err.message : String(err)}`, true);
-        }
-      },
-    );
-  }
+        this.server.tool(
+            "get_resource",
+            "Fetches a single wiki article by resource id, including its document tabs.",
+            {
+                resourceId: z
+                    .string()
+                    .describe("The resource id, e.g. res_101"),
+            },
+            async ({ resourceId }) => {
+                try {
+                    return json(await this.lk.getResource(resourceId));
+                } catch (err) {
+                    return text(
+                        `Error: ${err instanceof Error ? err.message : String(err)}`,
+                        true,
+                    );
+                }
+            },
+        );
+    }
 }
 
 function text(body: string, isError = false) {
-  return { content: [{ type: "text" as const, text: body }], isError };
+    return { content: [{ type: "text" as const, text: body }], isError };
 }
 
 function json(value: unknown) {
-  return text(JSON.stringify(value, null, 2));
+    return text(JSON.stringify(value, null, 2));
 }
 
 export default {
-  fetch(request: Request, env: Env, ctx: ExecutionContext) {
-    const { pathname } = new URL(request.url);
+    fetch(request: Request, env: Env, ctx: ExecutionContext) {
+        const { pathname } = new URL(request.url);
 
-    // Streamable HTTP — what Claude's custom connectors speak.
-    if (pathname === "/mcp") {
-      return ConvergenceGambitMCP.serve("/mcp").fetch(request, env, ctx);
-    }
-    // Legacy SSE transport, kept for MCP Inspector compatibility.
-    if (pathname === "/sse" || pathname === "/sse/message") {
-      return ConvergenceGambitMCP.serveSSE("/sse").fetch(request, env, ctx);
-    }
+        // Streamable HTTP — what Claude's custom connectors speak.
+        if (pathname === "/mcp") {
+            return ConvergenceGambitMCP.serve("/mcp").fetch(request, env, ctx);
+        }
+        // Legacy SSE transport, kept for MCP Inspector compatibility.
+        if (pathname === "/sse" || pathname === "/sse/message") {
+            return ConvergenceGambitMCP.serveSSE("/sse").fetch(
+                request,
+                env,
+                ctx,
+            );
+        }
 
-    return new Response(
-      "The Convergence Gambit MCP server. Nothing is true until you tell the players.",
-      { status: 404 },
-    );
-  },
+        return new Response(
+            "The Convergence Gambit MCP server. Nothing is true until you tell the players.",
+            { status: 404 },
+        );
+    },
 };
