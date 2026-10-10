@@ -12,9 +12,12 @@ import { LegendKeeper, LegendKeeperError } from "@legendkeeper/sdk";
 import type {
     DocumentBlocks,
     LegendKeeperClient,
+    MapFeature,
     Resource,
     ResourceListItem,
     SearchResult,
+    TimelineEvent,
+    TimelineLane,
 } from "./types";
 
 /** The API's maximum page size for listResources. */
@@ -76,6 +79,40 @@ export class SdkLegendKeeperClient implements LegendKeeperClient {
                 { q: query, limit },
             );
             return page.data;
+        });
+    }
+
+    async listMapFeatures(resourceId: string, documentId: string): Promise<MapFeature[]> {
+        return this.call(async () => {
+            const page = await this.lk.features.list({
+                projectId: this.projectId,
+                resourceId,
+                documentId,
+            });
+            return page.data;
+        });
+    }
+
+    async listTimelineLanes(resourceId: string, documentId: string): Promise<TimelineLane[]> {
+        return this.call(async () => {
+            const page = await this.lk.timelines.listLanes({
+                projectId: this.projectId,
+                resourceId,
+                documentId,
+            });
+            return page.data;
+        });
+    }
+
+    async listTimelineEvents(resourceId: string, documentId: string): Promise<TimelineEvent[]> {
+        return this.call(async () => {
+            const events: TimelineEvent[] = [];
+            const first = await this.lk.timelines.listEvents(
+                { projectId: this.projectId, resourceId, documentId },
+                { limit: PAGE_SIZE },
+            );
+            for await (const event of first) events.push(event);
+            return events;
         });
     }
 

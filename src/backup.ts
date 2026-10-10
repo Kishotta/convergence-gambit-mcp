@@ -4,17 +4,24 @@
  * Fires on the cron trigger configured in wrangler.jsonc. The v3 API has no
  * whole-project export endpoint, so the snapshot is synthesized through the
  * LegendKeeperClient seam: every resource (with its tabs and sidebar
- * properties) plus the block tree of every page tab. Written to R2 as one
+ * properties), the block tree of every page tab, the features of every map
+ * tab and the lanes and events of every timeline tab. Written to R2 as one
  * object per night, then anything older than RETENTION_DAYS is pruned.
  *
- * Not yet captured: map features, board records and timeline lanes/events
- * (the seam doesn't read them yet), assets, and deleted resources in the
- * trash. Page content is the irreplaceable part, so it comes first.
+ * Not yet captured: board records, assets (map images, uploads), and
+ * deleted resources in the trash.
  */
 
 import type { Env } from "./env";
 import { createLegendKeeperClient } from "./lk/client";
-import type { DocumentBlocks, LegendKeeperClient, Resource } from "./lk/types";
+import type {
+    DocumentBlocks,
+    LegendKeeperClient,
+    MapFeature,
+    Resource,
+    TimelineEvent,
+    TimelineLane,
+} from "./lk/types";
 
 const RETENTION_DAYS = 30;
 const KEY_PREFIX = "snapshots/";
@@ -35,6 +42,10 @@ export interface ProjectSnapshot {
         resource: Resource;
         /** Page block trees, keyed by document id. */
         pages: Record<string, DocumentBlocks>;
+        /** Map features, keyed by document id. */
+        maps: Record<string, MapFeature[]>;
+        /** Timeline lanes and events, keyed by document id. */
+        timelines: Record<string, { lanes: TimelineLane[]; events: TimelineEvent[] }>;
     }>;
     /** Reads that failed; the rest of the snapshot is still written. */
     errors: string[];
@@ -76,15 +87,26 @@ async function exportProject(lk: LegendKeeperClient): Promise<ProjectSnapshot> {
     for (const item of listed) {
         const resource = await throttled(`resource ${item.id}`, () => lk.getResource(item.id));
         if (!resource) continue;
-        const pages: Record<string, DocumentBlocks> = {};
+        const entry: ProjectSnapshot["resources"][number] = { resource, pages: {}, maps: {}, timelines: {} };
         for (const doc of resource.documents) {
-            if (doc.type !== "page") continue;
-            const blocks = await throttled(`page ${item.id}/${doc.id}`, () =>
-                lk.getDocumentBlocks(item.id, doc.id),
-            );
-            if (blocks) pages[doc.id] = blocks;
+            const where = `${item.id}/${doc.id}`;
+            if (doc.type === "page") {
+                const blocks = await throttled(`page ${where}`, () => lk.getDocumentBlocks(item.id, doc.id));
+                if (blocks) entry.pages[doc.id] = blocks;
+            } else if (doc.type === "map") {
+                const features = await throttled(`map ${where}`, () => lk.listMapFeatures(item.id, doc.id));
+                if (features) entry.maps[doc.id] = features;
+            } else if (doc.type === "time") {
+                const lanes = await throttled(`timeline lanes ${where}`, () =>
+                    lk.listTimelineLanes(item.id, doc.id),
+                );
+                const events = await throttled(`timeline events ${where}`, () =>
+                    lk.listTimelineEvents(item.id, doc.id),
+                );
+                if (lanes && events) entry.timelines[doc.id] = { lanes, events };
+            }
         }
-        snapshot.resources.push({ resource, pages });
+        snapshot.resources.push(entry);
     }
 
     return snapshot;

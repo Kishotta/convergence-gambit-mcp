@@ -115,9 +115,11 @@ export class ConvergenceGambitMCP extends McpAgent<Env, Record<string, never>, P
         this.server.tool(
             "read_article",
             "Reads one wiki article (resource) as markdown: its place in the tree, player visibility, " +
-                "tags, sidebar properties, and every tab's content. Mentions render as [Name](lk:id); " +
-                "pass that id back here to follow them. In the DM view, flags player-visible text that " +
-                "names hidden articles (the charter's reveal-layer check).",
+                "tags, sidebar properties, and every tab's content: pages as text, maps as their pins, " +
+                "regions, labels and folders, timelines as events by lane. Links render as [Name](lk:id); " +
+                "pass that id back here to follow them. Flags player-visible content that links to " +
+                "hidden articles (the charter's reveal-layer check). A pin may stand for a room, a " +
+                "building or a whole settlement depending on the map; read the linked article to know which.",
             {
                 resourceId: z.string().describe("The resource id, from get_tree, search or a mention."),
                 documentId: z.string().optional().describe("Only this tab. Default: every tab."),

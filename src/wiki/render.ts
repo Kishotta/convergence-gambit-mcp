@@ -112,7 +112,7 @@ function renderBlock(block: Block, ctx: RenderContext): string {
         case "resourceLink":
             return titled(block.title ?? "Links", resourceItems(block.items, ctx));
         case "map":
-            return `[Embedded map${block.resourceId ? ` of ${mention(block.resourceId, undefined, ctx)}` : ""}]`;
+            return `[Embedded map${block.resourceId ? ` of ${linkTo(block.resourceId, undefined, ctx)}` : ""}]`;
         case "unsupported":
             return `[unsupported content, block ${block.id}: not readable through the API]`;
         default:
@@ -151,7 +151,7 @@ function propertyBody(prop: PropertyBlock, ctx: RenderContext): string {
         case "embed":
             return `[${prop.provider} embed](${prop.url})`;
         case "map":
-            return `[Embedded map${prop.resourceId ? ` of ${mention(prop.resourceId, undefined, ctx)}` : ""}]`;
+            return `[Embedded map${prop.resourceId ? ` of ${linkTo(prop.resourceId, undefined, ctx)}` : ""}]`;
         case "unsupported":
             return `[unsupported property ${prop.id}: not readable through the API]`;
         default:
@@ -169,7 +169,7 @@ function runs(content: Run[] | undefined, ctx: RenderContext): string {
             if ("break" in run) return "  \n";
             if ("mention" in run) {
                 const m: Mention = run.mention;
-                return mention(m.resourceId, m.text ?? m.name, ctx);
+                return linkTo(m.resourceId, m.text ?? m.name, ctx);
             }
             if (run.code) return "`" + run.text + "`";
             let text = run.text;
@@ -182,12 +182,26 @@ function runs(content: Run[] | undefined, ctx: RenderContext): string {
         .join("");
 }
 
-function mention(resourceId: string, label: string | undefined, ctx: RenderContext): string {
+/**
+ * A link to a resource as `[Name](lk:id)`, marked when players can't see
+ * the target. Outside concealed content, such a link is a leak.
+ */
+export function linkTo(resourceId: string, label: string | undefined, ctx: RenderContext): string {
     const target = ctx.index.get(resourceId);
     const name = label || target?.name || resourceId;
     const hidden = target !== undefined && !ctx.index.isPlayerVisible(resourceId);
     if (hidden && !ctx.concealed) ctx.leaks.set(resourceId, target.name);
     return `[${name}](lk:${resourceId})` + (hidden ? ` ${HIDDEN}` : "");
+}
+
+/**
+ * The resource id an `lk://` uri points at (map features and timeline
+ * events link this way): `lk://resources/<id>` or
+ * `lk://resources/<id>/docs/<docId>`. A bare `lk://documents/<docId>`
+ * names no resource, so it yields undefined.
+ */
+export function resourceIdOf(uri: string | undefined): string | undefined {
+    return uri?.match(/^lk:\/\/resources\/([^/]+)/)?.[1];
 }
 
 /** Linked resources; players see only the ones revealed to them. */
@@ -198,7 +212,7 @@ function resourceItems(
 ): string {
     const lines = (items ?? [])
         .filter((item) => ctx.audience === "dm" || ctx.index.isPlayerVisible(item.resourceId))
-        .map((item) => `- ${mention(item.resourceId, undefined, ctx)}`);
+        .map((item) => `- ${linkTo(item.resourceId, undefined, ctx)}`);
     if (filter) lines.push(`- (dynamic, filter: \`${JSON.stringify(filter)}\`)`);
     return lines.join("\n") || "(empty)";
 }
@@ -253,7 +267,8 @@ function quote(body: string): string {
         .join("\n");
 }
 
-function concealed(ctx: RenderContext, render: () => string): string {
+/** Renders with `ctx.concealed` set, so links inside don't count as leaks. */
+export function concealed<T>(ctx: RenderContext, render: () => T): T {
     const previous = ctx.concealed;
     ctx.concealed = true;
     try {

@@ -7,7 +7,8 @@
 
 import type { LegendKeeperClient, LKDocument, Resource } from "../lk/types";
 import type { Audience, ResourceIndex, Visibility } from "./index";
-import { renderBlocks, renderProperty, type RenderContext } from "./render";
+import { concealed, renderBlocks, renderProperty, type RenderContext } from "./render";
+import { renderMap, renderTimeline } from "./spatial";
 
 // ---------------------------------------------------------------------------
 // read_article
@@ -70,8 +71,9 @@ export async function articleView(
     if (ctx.leaks.size) {
         sections.push(
             "## Reveal-layer check\n\n" +
-                "Player-visible text here names articles players can't see. Each renders as a dead link " +
-                "(the charter's one accepted leak). Move crown-jewel names into a secret block:\n\n" +
+                "Player-visible content here links to articles players can't see. In page text each " +
+                "renders as a dead link (the charter's one accepted leak); move crown-jewel names into a " +
+                "secret block. Whether a visible timeline event linking one is auto-hidden is unverified.\n\n" +
                 [...ctx.leaks].map(([id, name]) => `- [${name}](lk:${id})`).join("\n"),
         );
     }
@@ -89,17 +91,42 @@ async function tabSection(
     const heading =
         `## Tab: ${doc.name} (${doc.type}, ${doc.id})` + (doc.isHidden ? " 🔒 HIDDEN TAB, DM only" : "");
 
-    if (doc.type !== "page" && doc.type !== "blank") {
-        return `${heading}\n\n(${doc.type} content isn't rendered by this server yet.)`;
+    const body = await tabBody(lk, resource.id, doc, ctx);
+    return `${heading}\n\n${body}`;
+}
+
+async function tabBody(
+    lk: LegendKeeperClient,
+    resourceId: string,
+    doc: LKDocument,
+    ctx: RenderContext,
+): Promise<string> {
+    // Fetch before touching ctx: tabs render concurrently and share it.
+    switch (doc.type) {
+        case "page":
+        case "blank": {
+            const content = await lk.getDocumentBlocks(resourceId, doc.id);
+            return inTab(doc, ctx, () => renderBlocks(content.blocks, ctx) || "(empty)");
+        }
+        case "map": {
+            const features = await lk.listMapFeatures(resourceId, doc.id);
+            return inTab(doc, ctx, () => renderMap(features, ctx));
+        }
+        case "time": {
+            const [lanes, events] = await Promise.all([
+                lk.listTimelineLanes(resourceId, doc.id),
+                lk.listTimelineEvents(resourceId, doc.id),
+            ]);
+            return inTab(doc, ctx, () => renderTimeline(lanes, events, ctx));
+        }
+        default:
+            return `(${doc.type} content isn't rendered by this server yet.)`;
     }
-    const content = await lk.getDocumentBlocks(resource.id, doc.id);
-    const previous = ctx.concealed;
-    ctx.concealed = previous || doc.isHidden;
-    try {
-        return `${heading}\n\n${renderBlocks(content.blocks, ctx) || "(empty)"}`;
-    } finally {
-        ctx.concealed = previous;
-    }
+}
+
+/** Renders a tab's content, concealed when the tab itself is hidden. */
+function inTab(doc: LKDocument, ctx: RenderContext, render: () => string): string {
+    return doc.isHidden ? concealed(ctx, render) : render();
 }
 
 /**

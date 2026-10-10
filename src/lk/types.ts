@@ -34,6 +34,10 @@ export type Block = Schemas["Block"];
 export type Run = Schemas["Run"];
 export type PropertyBlock = Schemas["PropertyBlock"];
 export type SearchResult = Schemas["SearchResult"];
+/** A map document's pin, label, region, path or folder. */
+export type MapFeature = Schemas["Feature"];
+export type TimelineLane = Schemas["Lane"];
+export type TimelineEvent = Schemas["Event"];
 
 /**
  * SPEC-DRIFT: the spec in docs/ (newer than the one SDK 3.0.0 was generated
@@ -69,4 +73,10 @@ export interface LegendKeeperClient {
     getDocumentBlocks(resourceId: string, documentId: string): Promise<DocumentBlocks>;
     /** Full-text search over names, aliases and document content, best match first. */
     search(query: string, limit?: number): Promise<SearchResult[]>;
+    /** Every feature of a map document, hidden ones included for an admin key. */
+    listMapFeatures(resourceId: string, documentId: string): Promise<MapFeature[]>;
+    /** A timeline document's lanes, including lanes of timelines it chains. */
+    listTimelineLanes(resourceId: string, documentId: string): Promise<TimelineLane[]>;
+    /** A timeline document's events (all pages), ordered by start. */
+    listTimelineEvents(resourceId: string, documentId: string): Promise<TimelineEvent[]>;
 }
