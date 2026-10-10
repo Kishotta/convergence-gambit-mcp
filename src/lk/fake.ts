@@ -328,6 +328,7 @@ export class FakeLegendKeeperClient implements LegendKeeperClient {
                 aliases: r.aliases,
                 rank: r.rank,
                 isHidden: r.isHidden,
+                documents: r.documents.map(({ id, name, type }) => ({ id, name, type })),
                 createdAt: r.createdAt,
                 updatedAt: r.updatedAt,
             }));

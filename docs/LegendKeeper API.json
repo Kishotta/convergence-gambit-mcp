@@ -3,7 +3,7 @@
   "info": {
     "title": "LegendKeeper API",
     "version": "3.0.0",
-    "description": "REST API for the [LegendKeeper](https://www.legendkeeper.com) world-building platform.\n\nEvery endpoint follows one response contract: a single object is returned bare,\na collection is `{ data: [...], hasMore, nextCursor }`, and a delete returns `204`.\n\n## Blocks and rows\n\nPage content is a tree of typed blocks (`getDocumentBlocks`). Every block carries a stable `id`.\nA write that omits an id gets one minted. `insertBlock` and `replaceBlock` keep a requested id, and answer `409`\n`DUPLICATE_ID` with the field path when another block of the document already uses it; `replaceBlock` may reuse\nthe ids of the subtree it replaces. Two equal block ids in one body answer `400` `VALIDATION_ERROR` at the second. Legacy\ndocuments whose blocks lack ids become addressable after one `assignBlockIds` call.\n\n`replaceDocumentBlocks` replaces the whole tree. `insertBlock` appends at the end or takes one of\n`after`, `before`, `parent`; `replaceBlock` keeps the block id; `updateBlock` changes own fields;\n`moveBlock` relocates a subtree; `deleteBlock` removes it. Content the block model cannot\nexpress is returned as `unsupported` and survives a replace only when echoed by id.\nEvery write validates the resulting document and answers `400` with `VALIDATION_ERROR`,\n`UNSUPPORTED_KIND` or `INVALID_CONTENT` and the offending block path. Nothing is written in that case.\n\nKey-value data lives in three places and shares one row shape at each:\na sidebar property of kind `keyValue` (`/properties/{propertyId}/rows`), a `keyValue` block\n(`/blocks/{blockId}/rows`), and a property inside an infobox\n(`/blocks/{infoboxId}/properties/{propertyId}/rows`). Rows are ordered by `rank`.\nAn infobox row is a property; `/blocks/{infoboxId}/properties` takes the same body\nas `createProperty`.\n\nEvery block, row and infobox-property response carries the document `version`\n(also the `ETag` header). Send it back as `If-Match` to fail with `412` instead of\noverwriting a change made since you read.\n\n## Boards\n\nA board document holds tldraw 3.9 records: pages, shapes, bindings and assets (`getBoardContent`).\nReads return the records as stored, in tldraw's own record shape, so tldraw's `TLShape`,\n`TLBinding` and `TLAsset` types describe them. Writes (`createBoardShapes`, `updateBoardShapes`,\n`deleteBoardShapes`, `replaceBoardContent`) are batched and atomic, and every record is validated\nwith tldraw's validators against the schema the app's board view uses. Each record is stored\nseparately, so a write merges with concurrent edits made in the app, record by record.\n\n## Field limits\n\nEvery request field declares its limit as `maxLength`, `maxItems` or `maxProperties`, and nesting is limited\nto 64 levels. A value past a limit answers `400` with `code: \"VALIDATION_ERROR\"` and the field path.\nLimits apply to writes. Content created in the app that exceeds a limit reads back unchanged; a write that\nsends it back, such as a whole-block replace, answers `400` at that value.\n\n## Errors\n\nEvery 4xx and 5xx response body is `{ message, code, requestId, errors? }`. `code` is one of the\nvalues below and fixes the status. `message` is human-readable and stable in meaning, not in wording.\n`errors` appears only on 400 responses: one entry `{ path, message }` per failing field or block, with a\ndotted `path` (`block.children[0].level`). `KIND_MISMATCH` names a path entity rather than a body field\nand carries no `errors`.\n\n| Status | Code | Meaning |\n| --- | --- | --- |\n| 400 | `VALIDATION_ERROR` | The body or query fails the schema; `errors[].path` names each field. |\n| 400 | `INVALID_CONTENT` | The block tree is schema-valid but the editor cannot hold it. |\n| 400 | `UNSUPPORTED_KIND` | Creating an `unsupported` block or property, or echoing an unsupported id the document does not hold. |\n| 400 | `KIND_MISMATCH` | The target document, block or calendar is not a kind the route accepts (rows on a block or property that is not keyValue; blocks on a document that is not a page; pins on a document that is not a map; events on a document that is not a timeline; an update or delete of a built-in calendar). |\n| 401 | `UNAUTHENTICATED` | No credential, or an unknown, revoked or expired key. |\n| 402 | `SUBSCRIPTION_LAPSED` | The project owner's plan does not allow the write. |\n| 402 | `PAID_PLAN_REQUIRED` | The project owner is not on a paid plan, which API keys require; a trial does not count. |\n| 403 | `FORBIDDEN` | The caller is not a member with the required role. |\n| 403 | `WRONG_PROJECT` | The key's project is not the path's project. |\n| 403 | `INSUFFICIENT_SCOPE` | The key lacks a scope the operation requires. |\n| 403 | `FEATURE_UNAVAILABLE` | The request uses a field of a feature that is not available yet; send it without that field. |\n| 404 | `NOT_FOUND` | A missing entity, including a placement anchor. |\n| 405 | `METHOD_NOT_ALLOWED` | The path exists; the method does not. |\n| 409 | `DUPLICATE_ID` | A supplied id already exists. |\n| 409 | `AMBIGUOUS` | A block id occurs more than once in a legacy document. |\n| 409 | `ALREADY_DELETED` | The entity is already deleted. |\n| 409 | `HAS_CHILDREN` | The resource has child resources that are not deleted; pass `cascade=true` to delete them with it. |\n| 409 | `NOT_DELETED` | The entity to restore is not deleted. |\n| 409 | `PARENT_DELETED` | The resource's parent is deleted; restore the parent first. |\n| 409 | `IN_PROGRESS` | A prior operation on the entity has not finished. |\n| 409 | `IDEMPOTENCY_KEY_REUSED` | The idempotency key was used for a different request. |\n| 409 | `TOO_MANY_PENDING_INVITES` | The project holds as many pending invites as it may; revoke some before inviting more. |\n| 412 | `VERSION_MISMATCH` | `If-Match` does not equal the current version. |\n| 422 | `DOCUMENT_TOO_LARGE` | The write would grow the document past its size limit. |\n| 413 | `PAYLOAD_TOO_LARGE` | The body exceeds the route's limit. |\n| 413 | `STORAGE_QUOTA_EXCEEDED` | The project owner's storage quota is reached. |\n| 429 | `RATE_LIMITED` | A key or project tier is exhausted; see `Retry-After`. |\n| 429 | `UPLOAD_RATE_EXCEEDED` | The upload tier is exhausted. |\n| 500 | `INTERNAL` | Unexpected failure; the body carries only the code, a fixed message and `requestId`, which identifies the server log line. |\n\n## Identifiers\n\n`createResource`, `createLane`, `createEvent` and `createFeature` accept an optional `id`. An id must be a lowercase letter followed by 7 or 23 lowercase letters or digits (a cuid2 id of 8 or 24 characters):\nthe formats LegendKeeper itself generates. Any other value answers `400` `VALIDATION_ERROR` at `id`. An id that is\nalready taken answers `409` `DUPLICATE_ID` and nothing is created. A resource id is taken when any resource of the\nproject has it, including a deleted resource, which stays restorable from the trash. A lane, event or feature id\nis taken when the same timeline or map already has it.\n\nA client-chosen id lets an importer keep one stable identity per record and find it again on the next sync with\n`getResource`, instead of matching by name. Idempotency keys expire after 24 hours and are not a re-sync mechanism.\nA resource's first document is `documents[0]` of the created resource; it is reached through the resource id.\n\n## Resource order\n\nSiblings in the resource tree are ordered by `rank`, a fractional index compared as a plain string. `createResource`\nand `moveResource` compute the rank with the same jittered fractional-indexing functions the app uses: after the\nlast sibling by default, or between the anchor and its neighbour for `after` and `before`. The new rank never\nequals the rank of an existing sibling. Resources created or moved through older clients can share a rank; placing\nafter or before one of them places the resource after or before every sibling that shares that rank.\n\n## Request ids\n\nEvery response carries an `x-request-id` header; every error body carries the same value as `requestId`.\nA client-supplied `x-request-id` is echoed when it matches `^[A-Za-z0-9._-]{1,64}$`; otherwise a fresh id\nis minted and the supplied value is ignored. The server log line for the request carries the same id, so\nquote it when reporting a problem.\n\n## Idempotency\n\nEvery POST accepts an optional `Idempotency-Key` header of 1–255 characters from `A-Z a-z 0-9 . _ -`.\nA malformed key answers `400` `VALIDATION_ERROR` with `Idempotency-Key` in `errors[].path`. Keys are scoped\nto the API key, or to the user for a session, so two callers never share one.\n\nThe first request with a key runs and its response is kept for 24 hours. A repeat with the same key, method,\npath and body returns the kept status and body without running the write again, with `Idempotent-Replay: true`\nand `Idempotent-Original-Request-Id` naming the first request; its own `x-request-id` is new. A repeat while the\nfirst is still running answers `409` `IN_PROGRESS`; retry it. The same key on a different request answers\n`409` `IDEMPOTENCY_KEY_REUSED`.\n\n2xx and 4xx responses are kept, except the refusals answered before any write: `400` `VALIDATION_ERROR`,\n`401`, `403` and `404`. A refusal, a 5xx or 429 response, or a body over 64 KB is not kept: the key is released\nand a request with the key runs, so a corrected request can reuse the key. PATCH, PUT and DELETE ignore the header.\n\n## Rate limits\n\nAPI-key requests are counted in the tiers below. A request that exhausts any tier answers `429` with\n`code: \"RATE_LIMITED\"`.\n\n| Scope | Window | Limit |\n| --- | --- | --- |\n| Writes (POST, PUT, PATCH, DELETE), per key | 1 minute | 120 |\n| Writes (POST, PUT, PATCH, DELETE), per key | 1 hour | 3,000 |\n| All requests, per key | 1 minute | 300 |\n| All requests, per key | 1 hour | 6,000 |\n| All requests, per key | 1 day | 60,000 |\n| All requests, per project across keys | 1 hour | 12,000 |\n\nTiers are consumed in the order write minute, write hour, key minute, key hour, key day, project hour; a read skips the write tiers.\nEvery response to an authenticated request carries `X-RateLimit-Limit`, `X-RateLimit-Remaining` and\n`X-RateLimit-Reset` (a Unix time in seconds) for the tier with the fewest requests remaining, so a write reports\nthe write tier once it is the tightest. A `429` carries them for the tier that rejected, plus `Retry-After` in\nseconds. A request refused before it is counted (a 400 schema error, 401, 402, 403 or 405) carries none. The\nper-project tier is keyed on the key's project, so every key of a project draws on it."
+    "description": "REST API for the [LegendKeeper](https://www.legendkeeper.com) world-building platform.\n\nEvery endpoint follows one response contract: a single object is returned bare,\na collection is `{ data: [...], hasMore, nextCursor }`, and a delete returns `204`.\n\n## Blocks and rows\n\nPage content is a tree of typed blocks (`getDocumentBlocks`). Every block carries a stable `id`.\nA write that omits an id gets one minted. `insertBlock` and `replaceBlock` keep a requested id, and answer `409`\n`DUPLICATE_ID` with the field path when another block of the document already uses it; `replaceBlock` may reuse\nthe ids of the subtree it replaces. Two equal block ids in one body answer `400` `VALIDATION_ERROR` at the second. Legacy\ndocuments whose blocks lack ids become addressable after one `assignBlockIds` call.\n\n`replaceDocumentBlocks` replaces the whole tree. `insertBlock` appends at the end or takes one of\n`after`, `before`, `parent`; `replaceBlock` keeps the block id; `updateBlock` changes own fields;\n`moveBlock` relocates a subtree; `deleteBlock` removes it. Content the block model cannot\nexpress is returned as `unsupported` and survives a replace only when echoed by id.\nEvery write validates the resulting document and answers `400` with `VALIDATION_ERROR`,\n`UNSUPPORTED_KIND` or `INVALID_CONTENT` and the offending block path. Nothing is written in that case.\n\nKey-value data lives in three places and shares one row shape at each:\na sidebar property of kind `keyValue` (`/properties/{propertyId}/rows`), a `keyValue` block\n(`/blocks/{blockId}/rows`), and a property inside an infobox\n(`/blocks/{infoboxId}/properties/{propertyId}/rows`). Rows are ordered by `rank`.\nAn infobox row is a property; `/blocks/{infoboxId}/properties` takes the same body\nas `createProperty`.\n\nEvery block, row and infobox-property response carries the document `version`\n(also the `ETag` header). Send it back as `If-Match` to fail with `412` instead of\noverwriting a change made since you read.\n\n## Boards\n\nA board document holds tldraw 3.9 records: pages, shapes, bindings and assets (`getBoardContent`).\nReads return the records as stored, in tldraw's own record shape, so tldraw's `TLShape`,\n`TLBinding` and `TLAsset` types describe them. Writes (`createBoardShapes`, `updateBoardShapes`,\n`deleteBoardShapes`, `replaceBoardContent`) are batched and atomic, and every record is validated\nwith tldraw's validators against the schema the app's board view uses. Each record is stored\nseparately, so a write merges with concurrent edits made in the app, record by record.\n\n## Field limits\n\nEvery request field declares its limit as `maxLength`, `maxItems` or `maxProperties`, and nesting is limited\nto 64 levels. A value past a limit answers `400` with `code: \"VALIDATION_ERROR\"` and the field path.\nLimits apply to writes. Content created in the app that exceeds a limit reads back unchanged; a write that\nsends it back, such as a whole-block replace, answers `400` at that value.\n\n## Errors\n\nEvery 4xx and 5xx response body is `{ message, code, requestId, errors? }`. `code` is one of the\nvalues below and fixes the status. `message` is human-readable and stable in meaning, not in wording.\n`errors` appears only on 400 responses: one entry `{ path, message }` per failing field or block, with a\ndotted `path` (`block.children[0].level`). `KIND_MISMATCH` names a path entity rather than a body field\nand carries no `errors`.\n\n| Status | Code | Meaning |\n| --- | --- | --- |\n| 400 | `VALIDATION_ERROR` | The body or query fails the schema; `errors[].path` names each field. |\n| 400 | `INVALID_CONTENT` | The block tree is schema-valid but the editor cannot hold it. |\n| 400 | `UNSUPPORTED_KIND` | Creating an `unsupported` block or property, or echoing an unsupported id the document does not hold. |\n| 400 | `KIND_MISMATCH` | The target document, block or calendar is not a kind the route accepts (rows on a block or property that is not keyValue; blocks on a document that is not a page; pins on a document that is not a map; events on a document that is not a timeline; an update or delete of a built-in calendar). |\n| 401 | `UNAUTHENTICATED` | No credential, or an unknown, revoked or expired key. |\n| 402 | `SUBSCRIPTION_LAPSED` | The project owner's plan does not allow the write. |\n| 402 | `PAID_PLAN_REQUIRED` | The project owner is not on a paid plan, which API keys require; a trial does not count. |\n| 403 | `FORBIDDEN` | The caller is not a member with the required role. |\n| 403 | `WRONG_PROJECT` | The key's project is not the path's project. |\n| 403 | `INSUFFICIENT_SCOPE` | The key lacks a scope the operation requires. |\n| 403 | `FEATURE_UNAVAILABLE` | The request uses a field of a feature that is not available yet; send it without that field. |\n| 404 | `NOT_FOUND` | A missing entity, including a placement anchor. |\n| 405 | `METHOD_NOT_ALLOWED` | The path exists; the method does not. |\n| 409 | `DUPLICATE_ID` | A supplied id already exists. |\n| 409 | `AMBIGUOUS` | A block id occurs more than once in a legacy document. |\n| 409 | `ALREADY_DELETED` | The entity is already deleted. |\n| 409 | `HAS_CHILDREN` | The resource has child resources that are not deleted; pass `cascade=true` to delete them with it. |\n| 409 | `NOT_DELETED` | The entity to restore is not deleted. |\n| 409 | `PARENT_DELETED` | The resource's parent is deleted; restore the parent first. |\n| 409 | `IN_PROGRESS` | A prior operation on the entity has not finished. |\n| 409 | `IDEMPOTENCY_KEY_REUSED` | The idempotency key was used for a different request. |\n| 409 | `TOO_MANY_PENDING_INVITES` | The project holds as many pending invites as it may; revoke some before inviting more. |\n| 412 | `VERSION_MISMATCH` | `If-Match` does not equal the current version. |\n| 422 | `DOCUMENT_TOO_LARGE` | The write would grow the document past its size limit. |\n| 413 | `PAYLOAD_TOO_LARGE` | The body exceeds the route's limit. |\n| 413 | `STORAGE_QUOTA_EXCEEDED` | The project owner's storage quota is reached. |\n| 429 | `RATE_LIMITED` | A key or project tier is exhausted; see `Retry-After`. |\n| 429 | `UPLOAD_RATE_EXCEEDED` | The upload tier is exhausted. |\n| 500 | `INTERNAL` | Unexpected failure; the body carries only the code, a fixed message and `requestId`, which identifies the server log line. |\n\n## Identifiers\n\n`createResource`, `createLane`, `createEvent` and `createFeature` accept an optional `id`. An id must be a lowercase letter followed by 7 or 23 lowercase letters or digits (a cuid2 id of 8 or 24 characters):\nthe formats LegendKeeper itself generates. Any other value answers `400` `VALIDATION_ERROR` at `id`. An id that is\nalready taken answers `409` `DUPLICATE_ID` and nothing is created. A resource id is taken when any resource of the\nproject has it, including a deleted resource, which stays restorable from the trash. A lane, event or feature id\nis taken when the same timeline or map already has it.\n\nA client-chosen id lets an importer keep one stable identity per record and find it again on the next sync with\n`getResource`, instead of matching by name. Idempotency keys expire after 24 hours and are not a re-sync mechanism.\nA created resource's documents are its `documents`, in the order sent; each is reached through the resource id.\n\n## Resource order\n\nSiblings in the resource tree are ordered by `rank`, a fractional index compared as a plain string. `createResource`\nand `moveResource` compute the rank with the same jittered fractional-indexing functions the app uses: after the\nlast sibling by default, or between the anchor and its neighbour for `after` and `before`. The new rank never\nequals the rank of an existing sibling. Resources created or moved through older clients can share a rank; placing\nafter or before one of them places the resource after or before every sibling that shares that rank.\n\n## Request ids\n\nEvery response carries an `x-request-id` header; every error body carries the same value as `requestId`.\nA client-supplied `x-request-id` is echoed when it matches `^[A-Za-z0-9._-]{1,64}$`; otherwise a fresh id\nis minted and the supplied value is ignored. The server log line for the request carries the same id, so\nquote it when reporting a problem.\n\n## Idempotency\n\nEvery POST accepts an optional `Idempotency-Key` header of 1–255 characters from `A-Z a-z 0-9 . _ -`.\nA malformed key answers `400` `VALIDATION_ERROR` with `Idempotency-Key` in `errors[].path`. Keys are scoped\nto the API key, or to the user for a session, so two callers never share one.\n\nThe first request with a key runs and its response is kept for 24 hours. A repeat with the same key, method,\npath and body returns the kept status and body without running the write again, with `Idempotent-Replay: true`\nand `Idempotent-Original-Request-Id` naming the first request; its own `x-request-id` is new. A repeat while the\nfirst is still running answers `409` `IN_PROGRESS`; retry it. The same key on a different request answers\n`409` `IDEMPOTENCY_KEY_REUSED`.\n\n2xx and 4xx responses are kept, except the refusals answered before any write: `400` `VALIDATION_ERROR`,\n`401`, `403` and `404`. A refusal, a 5xx or 429 response, or a body over 64 KB is not kept: the key is released\nand a request with the key runs, so a corrected request can reuse the key. PATCH, PUT and DELETE ignore the header.\n\n## Rate limits\n\nAPI-key requests are counted in the tiers below. A request that exhausts any tier answers `429` with\n`code: \"RATE_LIMITED\"`.\n\n| Scope | Window | Limit |\n| --- | --- | --- |\n| Writes (POST, PUT, PATCH, DELETE), per key | 1 minute | 120 |\n| Writes (POST, PUT, PATCH, DELETE), per key | 1 hour | 3,000 |\n| All requests, per key | 1 minute | 300 |\n| All requests, per key | 1 hour | 6,000 |\n| All requests, per key | 1 day | 60,000 |\n| All requests, per project across keys | 1 hour | 12,000 |\n\nTiers are consumed in the order write minute, write hour, key minute, key hour, key day, project hour; a read skips the write tiers.\nEvery response to an authenticated request carries `X-RateLimit-Limit`, `X-RateLimit-Remaining` and\n`X-RateLimit-Reset` (a Unix time in seconds) for the tier with the fewest requests remaining, so a write reports\nthe write tier once it is the tightest. A `429` carries them for the tier that rejected, plus `Retry-After` in\nseconds. A request refused before it is counted (a 400 schema error, 401, 402, 403 or 405) carries none. The\nper-project tier is keyed on the key's project, so every key of a project draws on it."
   },
   "servers": [
     {
@@ -1976,11 +1976,11 @@
             "type": "string",
             "minLength": 1,
             "maxLength": 100,
-            "description": "For a timeline (`time`) document, the id of a calendar from listCalendars, custom or built-in. An id that names no calendar in the project, or a `calendarId` with any other type, answers 400 VALIDATION_ERROR at `document.calendarId`."
+            "description": "For a timeline (`time`) document, the id of a calendar from listCalendars, custom or built-in. An id that names no calendar in the project, or a `calendarId` with any other type, answers 400 VALIDATION_ERROR at `documents[i].calendarId`."
           },
           "blocks": {
             "type": "array",
-            "description": "The content of a `page` document as Blocks, validated as replaceDocumentBlocks validates them. Blocks with any other type answer 400 VALIDATION_ERROR at `document.blocks`.",
+            "description": "The content of a `page` document as Blocks, validated as replaceDocumentBlocks validates them. Blocks with any other type answer 400 VALIDATION_ERROR at `documents[i].blocks`.",
             "maxItems": 10000,
             "items": {
               "$ref": "#/components/schemas/Block"
@@ -1988,7 +1988,7 @@
           }
         },
         "additionalProperties": false,
-        "description": "The first document of a new resource. Omitted, the resource starts with a `blank` document named `Main`, which its first typed write converts."
+        "description": "A document of a new resource."
       },
       "ResourceCreateParams": {
         "type": "object",
@@ -2079,8 +2079,14 @@
             "pattern": "^[a-z](?:[0-9a-z]{7}|[0-9a-z]{23})$",
             "description": "Optional client-chosen id: a lowercase letter followed by 7 or 23 lowercase letters or digits (a cuid2 id of 8 or 24 characters). See Identifiers. A malformed id answers 400 VALIDATION_ERROR. An id already used by a resource of the project, including a deleted one, answers 409 DUPLICATE_ID."
           },
-          "document": {
-            "$ref": "#/components/schemas/ResourceDocumentParams"
+          "documents": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ResourceDocumentParams"
+            },
+            "minItems": 1,
+            "maxItems": 5,
+            "description": "1–5 documents, created in this order. Omitted, the resource starts with one `blank` document named `Main`, which its first typed write converts."
           },
           "iconSize": {
             "type": "string",
@@ -9136,7 +9142,7 @@
           },
           "meta": {
             "type": "object",
-            "additionalProperties": false
+            "additionalProperties": {}
           }
         },
         "required": [
@@ -9191,12 +9197,12 @@
           },
           "props": {
             "type": "object",
-            "additionalProperties": false,
+            "additionalProperties": {},
             "description": "The props of the shape type, exactly as tldraw 3.9 defines them (`TLGeoShapeProps`, `TLTextShapeProps` and so on)."
           },
           "meta": {
             "type": "object",
-            "additionalProperties": false
+            "additionalProperties": {}
           }
         },
         "required": [
@@ -9242,12 +9248,12 @@
           },
           "props": {
             "type": "object",
-            "additionalProperties": false,
+            "additionalProperties": {},
             "description": "`TLArrowBindingProps`: `terminal` (`start` or `end`), `normalizedAnchor`, `isExact`, `isPrecise`."
           },
           "meta": {
             "type": "object",
-            "additionalProperties": false
+            "additionalProperties": {}
           }
         },
         "required": [
@@ -9284,12 +9290,12 @@
           },
           "props": {
             "type": "object",
-            "additionalProperties": false,
+            "additionalProperties": {},
             "description": "The props of the asset type (`TLImageAsset`, `TLVideoAsset`, `TLBookmarkAsset`). An image `src` is the `url` of an image asset of this project; a video `src` is a LegendKeeper asset URL."
           },
           "meta": {
             "type": "object",
-            "additionalProperties": false
+            "additionalProperties": {}
           }
         },
         "required": [
@@ -11273,7 +11279,7 @@
           "Resources"
         ],
         "summary": "Create a resource",
-        "description": "Creates a resource with one document, described by `document`. Body is ResourceCreateParams. The resource is appended after its last sibling unless `after` or `before` places it. See Resource order. The request is validated as a whole: on any 4xx, nothing is created. The response is the full Resource, with the new document in `documents`; read its content with getDocumentBlocks. A non-admin caller must create the resource under a resource they can edit, and not hidden.",
+        "description": "Creates a resource with the documents in `documents`. Body is ResourceCreateParams. The resource is appended after its last sibling unless `after` or `before` places it. See Resource order. The request is validated as a whole: on any 4xx, nothing is created. The response is the full Resource, with the new documents in `documents` in request order; read their content with getDocumentBlocks. A non-admin caller must create the resource under a resource they can edit, and not hidden.",
         "security": [
           {
             "bearerAuth": []
@@ -11322,7 +11328,7 @@
             }
           },
           "400": {
-            "description": "Validation error, with block paths under `document.blocks` (VALIDATION_ERROR), unsupported kind (UNSUPPORTED_KIND) or a tree the editor cannot hold (INVALID_CONTENT)",
+            "description": "Validation error, with block paths under `documents[i].blocks` (VALIDATION_ERROR), unsupported kind (UNSUPPORTED_KIND) or a tree the editor cannot hold (INVALID_CONTENT)",
             "content": {
               "application/json": {
                 "schema": {
@@ -23285,24 +23291,5 @@
       }
     }
   },
-  "webhooks": {},
-  "x-scalar-watch-mode": false,
-  "x-scalar-order": [
-    "legendkeeper-api/description/introduction",
-    "legendkeeper-api/tag/resources",
-    "legendkeeper-api/tag/documents",
-    "legendkeeper-api/tag/properties",
-    "legendkeeper-api/tag/blocks",
-    "legendkeeper-api/tag/timelines",
-    "legendkeeper-api/tag/features",
-    "legendkeeper-api/tag/boards",
-    "legendkeeper-api/tag/assets",
-    "legendkeeper-api/tag/members",
-    "legendkeeper-api/tag/invites",
-    "legendkeeper-api/tag/tags",
-    "legendkeeper-api/tag/search",
-    "legendkeeper-api/tag/calendars",
-    "legendkeeper-api/tag/projects",
-    "legendkeeper-api/models"
-  ]
+  "webhooks": {}
 }

@@ -47,7 +47,7 @@ The SDK is a beta regenerated from the OpenAPI spec on every API release (three 
 
 ### Spec drift — grep for SPEC-DRIFT
 
-`docs/LegendKeeper API.json` is a newer cut of the spec than the one the pinned SDK was generated from, even though both say `3.0.0` (e.g. it adds a read-only `name` on mentions and `documents` on `ResourceListItem`). Where code touches such a field, it's declared optional in `src/lk/types.ts` and tagged `SPEC-DRIFT`; never rely on one being present. On an SDK upgrade, diff the SDK's bundled `node_modules/@legendkeeper/sdk/openapi.json` against `docs/` and reconcile each tag.
+`docs/LegendKeeper API.json` is a copy of the spec the pinned SDK (4.0.0) was generated from, so there are no open `SPEC-DRIFT` tags right now. The spec's `info.version` is not a reliable marker (it still says `3.0.0`); the SDK's `CHANGELOG.md` and a structural diff are. When code has to touch a field the live API returns but the pinned SDK doesn't type yet, declare it optional in `src/lk/types.ts`, tag it `SPEC-DRIFT`, and never rely on it being present. On an SDK upgrade, read `node_modules/@legendkeeper/sdk/CHANGELOG.md`, diff the bundled `node_modules/@legendkeeper/sdk/openapi.json` against `docs/`, reconcile each tag, then copy the bundled spec over the one in `docs/`.
 
 The three original critical unknowns are resolved: the API **does** expose the visibility model (`isHidden` on resources/documents/properties, `secret` blocks); page content is a **typed block tree** (the SDK's `@legendkeeper/sdk/blocks` has builders for the write side); there is **no** whole-project export.
 

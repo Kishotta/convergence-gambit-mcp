@@ -40,12 +40,10 @@ export type TimelineLane = Schemas["Lane"];
 export type TimelineEvent = Schemas["Event"];
 
 /**
- * SPEC-DRIFT: the spec in docs/ (newer than the one SDK 3.0.0 was generated
- * from, despite both saying 3.0.0) adds a read-only `name` to mentions: the
- * resource's current name. Typed optional here until the SDK catches up,
- * and never relied on; the renderer falls back to the resource index.
+ * A mention's optional read-only `name` is the resource's current name; the
+ * renderer prefers the author's `text` label and falls back to the index.
  */
-export type Mention = Extract<Run, { mention: unknown }>["mention"] & { name?: string };
+export type Mention = Extract<Run, { mention: unknown }>["mention"];
 
 // ---------------------------------------------------------------------------
 // The client seam
