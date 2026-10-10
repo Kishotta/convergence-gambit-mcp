@@ -1,3 +1,8 @@
 GITHUB_CLIENT_ID=<your dev GitHub OAuth App client id>
 GITHUB_CLIENT_SECRET=<your dev GitHub OAuth App client secret>
 COOKIE_ENCRYPTION_KEY=<random secret, e.g. output of: node -e "console.log(crypto.randomUUID())">
+# Optional. Unset → the in-memory fake answers. Set → local dev reads the REAL campaign
+# project, DM secrets included. Must be an ADMIN-role key (Project Settings → Developers → API Keys).
+LK_API_KEY=<LegendKeeper project API key>
+# Optional; saves one project-lookup request per session.
+LK_PROJECT_ID=

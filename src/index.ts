@@ -1,23 +1,30 @@
 /**
- * The Convergence Gambit MCP server — walking skeleton, now behind OAuth.
+ * The Convergence Gambit MCP server.
  *
  * Bespoke, single-tenant, two clients (Connor and Claude). The design
  * philosophy is baked into source, not configuration: this server exists
  * to make LegendKeeper article work follow the architecture charter.
  *
- * Skeleton toolset:
- *   - ping            proves the transport
+ * Read-side toolset (writes come later, charter-aware):
+ *   - ping            proves the transport; reports which LK backend answers
  *   - get_charter     serves the architecture charter verbatim
- *   - list_resources  proves the LegendKeeperClient seam (fake-backed today)
- *   - get_resource    proves parameterized reads through the seam
+ *   - get_tree        the project hierarchy as an outline
+ *   - read_article    one article, every tab, rendered to markdown
+ *   - search          LegendKeeper full-text search
+ *   - find_by_tag     tag-index queries (DM Dashboard / Field Notes previews)
+ *   - list_tags       tag usage, with a player-safety count per tag
+ *   - get_page_blocks raw block JSON, for debugging and write-tool planning
  *
- * Phase 2: GitHub OAuth (src/auth/) now fronts every tool. No token is ever
- * issued to a GitHub account other than the one allowlisted in
+ * The views take an audience: "dm" (everything, concealed layers marked)
+ * or "player" (only what's revealed). See src/wiki/.
+ *
+ * GitHub OAuth (src/auth/) fronts every tool. No token is ever issued to a
+ * GitHub account other than the one allowlisted in
  * src/auth/github-handler.ts — see that file for why this is stricter than
  * Cloudflare's reference "authenticate anyone, hide extra tools" pattern.
  *
- * SECURITY NOTE: holds no LegendKeeper API key yet. Do not add LK_API_KEY as
- * a secret until the real client (README, phase 4) actually needs it.
+ * Reads the live project when LK_API_KEY is set (see src/lk/client.ts).
+ * That key is ADMIN-role, so tool output includes DM-only secrets by design.
  */
 
 import { McpAgent } from "agents/mcp";
@@ -32,27 +39,49 @@ import type { Props } from "./auth/upstream";
 import type { Env } from "./env";
 import { createLegendKeeperClient } from "./lk/client";
 import type { LegendKeeperClient } from "./lk/types";
+import { ResourceIndex } from "./wiki/index";
+import { articleView, searchView, taggedView, tagsView, treeView } from "./wiki/views";
+
+/**
+ * How long a ResourceIndex snapshot is reused. Long enough that a burst of
+ * tool calls shares one tree walk; short enough that a reveal Connor just
+ * made in the app shows up within a minute.
+ */
+const INDEX_TTL_MS = 60_000;
+
+const audience = z
+    .enum(["dm", "player"])
+    .default("dm")
+    .describe(
+        '"dm" (default): everything, with hidden tabs, secret blocks and hidden properties marked. ' +
+            '"player": only what players can currently see, for reveal-layer checks.',
+    );
 
 export class ConvergenceGambitMCP extends McpAgent<Env, Record<string, never>, Props> {
     server = new McpServer({
         name: "The Convergence Gambit",
-        version: "0.1.0",
+        version: "0.2.0",
     });
 
-    /**
-     * The seam. Swap FakeLegendKeeperClient for the real HTTP client when
-     * the API ships; every tool above this line is untouched at cutover.
-     */
-    private lk: LegendKeeperClient = createLegendKeeperClient();
+    /** The seam. Every tool reads LegendKeeper through this and nothing else. */
+    private lk!: LegendKeeperClient;
+
+    private indexCache?: { loadedAt: number; index: Promise<ResourceIndex> };
 
     async init() {
+        this.lk = createLegendKeeperClient(this.env);
+
         this.server.tool(
             "ping",
-            "Health check. Returns a signature line proving the Convergence Gambit MCP server is alive.",
+            "Health check. Proves the Convergence Gambit MCP server is alive and says whether it is " +
+                "reading the live LegendKeeper project or the offline fake.",
             {},
             async () =>
                 text(
-                    "The Lady's shadow falls across the skeleton, and it walks. (pong)",
+                    "The Lady's shadow falls across the skeleton, and it walks. (pong)\n" +
+                        (this.lk.backend === "legendkeeper"
+                            ? "Backend: live LegendKeeper project."
+                            : "Backend: in-memory FAKE (no LK_API_KEY configured). Data is seed data, not the campaign."),
                 ),
         );
 
@@ -66,32 +95,112 @@ export class ConvergenceGambitMCP extends McpAgent<Env, Record<string, never>, P
         );
 
         this.server.tool(
-            "list_resources",
-            "Lists all wiki articles (LegendKeeper resources) in the Convergence Gambit project: " +
-                "id, name, parent, tags, aliases. Currently backed by an in-memory fake with seed data.",
-            {},
-            async () => json(await this.lk.listResources()),
+            "get_tree",
+            "The wiki's hierarchy as an indented outline: name, id, tags, and 🔒 on hidden resources. " +
+                "Start here to orient, or pass rootId to see one branch (e.g. everything under Sigil).",
+            {
+                rootId: z.string().optional().describe("Only this resource and its descendants."),
+                maxDepth: z
+                    .number()
+                    .int()
+                    .min(1)
+                    .optional()
+                    .describe("Levels to show below the root; deeper branches show as '…'."),
+                audience,
+            },
+            async ({ rootId, maxDepth, audience }) =>
+                guard(async () => text(treeView(await this.index(), { rootId, maxDepth, audience }))),
         );
 
         this.server.tool(
-            "get_resource",
-            "Fetches a single wiki article by resource id, including its document tabs.",
+            "read_article",
+            "Reads one wiki article (resource) as markdown: its place in the tree, player visibility, " +
+                "tags, sidebar properties, and every tab's content. Mentions render as [Name](lk:id); " +
+                "pass that id back here to follow them. In the DM view, flags player-visible text that " +
+                "names hidden articles (the charter's reveal-layer check).",
             {
-                resourceId: z
-                    .string()
-                    .describe("The resource id, e.g. res_101"),
+                resourceId: z.string().describe("The resource id, from get_tree, search or a mention."),
+                documentId: z.string().optional().describe("Only this tab. Default: every tab."),
+                audience,
             },
-            async ({ resourceId }) => {
-                try {
-                    return json(await this.lk.getResource(resourceId));
-                } catch (err) {
-                    return text(
-                        `Error: ${err instanceof Error ? err.message : String(err)}`,
-                        true,
-                    );
-                }
-            },
+            async ({ resourceId, documentId, audience }) =>
+                guard(async () =>
+                    text(await articleView(this.lk, await this.index(), resourceId, { audience, documentId })),
+                ),
         );
+
+        this.server.tool(
+            "search",
+            "LegendKeeper full-text search over article names, aliases and tab content, best match " +
+                "first, with the matching passage. Searches as the DM: hits include hidden content.",
+            {
+                query: z.string().min(1).max(500),
+                limit: z.number().int().min(1).max(100).default(20),
+            },
+            async ({ query, limit }) =>
+                guard(async () => text(await searchView(this.lk, await this.index(), query, limit))),
+        );
+
+        this.server.tool(
+            "find_by_tag",
+            "Lists resources by tag, the way the charter's tag indexes do (DM Dashboard queries like " +
+                "'npc' + 'act-1'; Field Notes indexes like 'met'). With audience \"player\", shows exactly " +
+                "what a Field Notes index would show players right now.",
+            {
+                tags: z.array(z.string().min(1)).min(1),
+                match: z.enum(["any", "all"]).default("all"),
+                audience,
+            },
+            async ({ tags, match, audience }) =>
+                guard(async () => text(taggedView(await this.index(), { tags, match, audience }))),
+        );
+
+        this.server.tool(
+            "list_tags",
+            "Every tag in the project with how many resources carry it and how many of those players " +
+                "can see. Use to pick existing tag vocabulary and to audit charter §6 tagging discipline " +
+                "(DM-only grouping tags should have 0 player-visible carriers).",
+            {},
+            async () => guard(async () => text(tagsView(await this.index()))),
+        );
+
+        this.server.tool(
+            "get_page_blocks",
+            "Raw block tree of one page tab as JSON, with block ids and the document version. For " +
+                "debugging rendering and planning edits; prefer read_article for reading.",
+            {
+                resourceId: z.string(),
+                documentId: z.string(),
+            },
+            async ({ resourceId, documentId }) =>
+                guard(async () => json(await this.lk.getDocumentBlocks(resourceId, documentId))),
+        );
+    }
+
+    /** The shared ResourceIndex, rebuilt after INDEX_TTL_MS or after a failed load. */
+    private index(): Promise<ResourceIndex> {
+        const now = Date.now();
+        if (!this.indexCache || now - this.indexCache.loadedAt > INDEX_TTL_MS) {
+            const index = ResourceIndex.load(this.lk);
+            const entry = { loadedAt: now, index };
+            index.catch(() => {
+                if (this.indexCache === entry) this.indexCache = undefined;
+            });
+            this.indexCache = entry;
+        }
+        return this.indexCache.index;
+    }
+}
+
+/**
+ * Errors from the seam (a missing resource, an API failure) come back as
+ * tool errors Claude can read and act on, not as protocol failures.
+ */
+async function guard(fn: () => Promise<ReturnType<typeof text>>) {
+    try {
+        return await fn();
+    } catch (err) {
+        return text(`Error: ${err instanceof Error ? err.message : String(err)}`, true);
     }
 }
 

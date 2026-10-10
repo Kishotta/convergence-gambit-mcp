@@ -1,5 +1,12 @@
 # Cutting over to the real LegendKeeper API
 
+> **Status (2026-10-09): steps 0–3 done for the read side,** against the v3
+> API and the official `@legendkeeper/sdk` rather than the hand-written
+> `src/lk/http.ts` this runbook anticipated (it's `src/lk/sdk.ts`). All three
+> critical unknowns resolved; see README's "What the real API answered".
+> Remaining: step 4 against production (needs the `LK_API_KEY` secret),
+> step 5 (write tools). Kept for history; README and CLAUDE.md are current.
+
 **When to use this:** LegendKeeper publishes the v2 API docs / OpenAPI spec
 (README phase 4). Until then there's genuinely nothing else to do — this
 repo is deliberately stalled at "walking skeleton + OAuth" waiting on an

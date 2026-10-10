@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Bespoke, single-tenant MCP server (Cloudflare Worker + Durable Object) connecting Claude to the campaign's LegendKeeper wiki for "The Convergence Gambit" D&D campaign. Two clients only: Connor and Claude. No multi-tenancy, no database, no general-purpose design — the design philosophy is baked into source, not configuration.
 
-**Current phase: walking skeleton, behind GitHub OAuth.** No LK API key yet. LegendKeeper calls are backed by an in-memory fake seeded with campaign data. Every tool now sits behind GitHub OAuth (`src/auth/`), allowlisted to exactly one GitHub account (`Kishotta`). The point of this phase is to prove the full path: Claude mobile app → custom connector → GitHub login → Cloudflare Worker → `LegendKeeperClient` seam. See README.md's "Phases" section for what comes next (custom domain, real client, charter-aware tools).
+**Current phase: read-side tools against the live LegendKeeper v3 API, behind GitHub OAuth.** Reads go through the official `@legendkeeper/sdk` behind the `LegendKeeperClient` seam; with no `LK_API_KEY` configured, an in-memory fake answers instead. Every tool sits behind GitHub OAuth (`src/auth/`), allowlisted to exactly one GitHub account (`Kishotta`). Next: charter-aware write tools, designed from how the read tools get used. See README.md's "Phases" section.
 
 ## Commands
 
@@ -22,34 +22,35 @@ There is no test suite and no lint script currently configured. `npm run typeche
 
 `npm run dev` now requires `.dev.vars` populated (`GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET`, `COOKIE_ENCRYPTION_KEY` — see README's "Authentication" section) or the OAuth-gated routes will 401/500 immediately.
 
+Without `LK_API_KEY` in `.dev.vars` the fake answers (`ping` says which backend is live). With it, local dev reads the **real campaign project, DM secrets included** — mind where transcripts go.
+
 Manual verification: `npx @modelcontextprotocol/inspector`, connect to `http://localhost:8787/mcp` (Streamable HTTP) — Inspector will walk through the GitHub login popup. The `/sse` and `/sse/message` routes exist only for legacy Inspector compatibility, and sit behind the same OAuth gate.
 
 ## Architecture: the seam
 
 Everything meaningful lives behind one interface, `LegendKeeperClient` (`src/lk/types.ts`):
 
-- `src/lk/types.ts` — the `LegendKeeperClient` interface plus all LK domain types (Resource, Document, Property, write inputs, `ProjectSnapshot`).
-- `src/lk/fake.ts` — `FakeLegendKeeperClient`, an in-memory implementation seeded with a slice of real campaign data. State lives only for the Durable Object instance's lifetime.
-- `src/lk/client.ts` — `createLegendKeeperClient()`, the single construction point for the seam. Both `src/index.ts` and `src/backup.ts` get their client from here.
-- `src/index.ts` — the `ConvergenceGambitMCP` McpAgent and its tools. Tools talk **only** to the `LegendKeeperClient` interface, never to the fake directly by type.
+- `src/lk/types.ts` — the `LegendKeeperClient` interface (read-only for now) plus LK domain types, re-exported type-only from the SDK's generated `components["schemas"]`. Everything above the seam imports LK types from here, never from `@legendkeeper/sdk` directly.
+- `src/lk/sdk.ts` — `SdkLegendKeeperClient`, the **only runtime import of `@legendkeeper/sdk`**. Wraps SDK errors into messages carrying the API's `code` and `requestId`. Passes a wrapped `fetch` because the SDK calls `config.fetch(...)` as a method, which throws "Illegal invocation" on Workers with the bare global.
+- `src/lk/fake.ts` — `FakeLegendKeeperClient`, in-memory, seeded in the real v3 shapes and deliberately exercising every visibility layer (hidden element + subtree, hidden tab, secret block, hidden property, visible text mentioning a hidden element).
+- `src/lk/client.ts` — `createLegendKeeperClient(env)`, the single construction point: `LK_API_KEY` set → SDK client, else fake. Called in `McpAgent.init()` (needs `this.env`) and in `src/backup.ts`.
+- `src/wiki/` — above the seam, SDK-free:
+  - `index.ts` — `ResourceIndex`: the whole tree from one paged `listResources` walk. Answers what the API doesn't: **effective** player visibility (a hidden ancestor hides its subtree — the API only reports each resource's own `isHidden`), breadcrumb paths, tree order (siblings by `rank`, a plain string compare), tag filtering and per-tag player-visible counts. The agent caches it for 60s (`INDEX_TTL_MS` in `src/index.ts`).
+  - `render.ts` — block tree → markdown for an `Audience` (`"dm"` marks concealed layers inline; `"player"` drops them). Mentions render as `[Name](lk:resourceId)`. Collects "leaks" (player-visible text mentioning a player-hidden resource) in `ctx.leaks`.
+  - `views.ts` — what each tool returns, composed from seam calls + the index.
+- `src/index.ts` — the `ConvergenceGambitMCP` McpAgent and its tools. Tools talk **only** to the `LegendKeeperClient` interface and `src/wiki/`.
 
-When the real LegendKeeper API ships, a new `src/lk/http.ts` will implement `LegendKeeperClient` against the v2 endpoints, and exactly one line in `src/lk/client.ts` changes. No tool logic — nor `src/backup.ts` — should change at that cutover — if a change requires touching the fake's internals, something has leaked across the seam.
+The SDK is a beta regenerated from the OpenAPI spec on every API release (three major versions in its first three days), pinned to an exact version in `package.json`. An SDK upgrade should touch only `src/lk/`; if it forces changes in `src/wiki/` or tools beyond type fallout, something leaked across the seam.
 
-### Domain types are speculative — grep for SPEC-DRIFT
+### Spec drift — grep for SPEC-DRIFT
 
-`src/lk/types.ts` was derived from a pre-release API docs screenshot. Every field whose shape is guessed is tagged `SPEC-DRIFT` in a comment. Three are called out as critical unknowns to verify the day real docs land:
+`docs/LegendKeeper API.json` is a newer cut of the spec than the one the pinned SDK was generated from, even though both say `3.0.0` (e.g. it adds a read-only `name` on mentions and `documents` on `ResourceListItem`). Where code touches such a field, it's declared optional in `src/lk/types.ts` and tagged `SPEC-DRIFT`; never rely on one being present. On an SDK upgrade, diff the SDK's bundled `node_modules/@legendkeeper/sdk/openapi.json` against `docs/` and reconcile each tag.
 
-1. **Does the API expose the visibility model** (`Resource.secret` / `DocumentSummary.secret`)? The entire architecture charter (see below) depends on element/tab/block secrecy. If the real API has no such field, every write tool must loudly warn that a manual secrecy pass is required — never silently publish spoilers.
-2. **What format do `page` documents accept** for `LKDocument.content`? Assumed to be ProseMirror-style JSON, not markdown. Kept as `unknown` until confirmed; the eventual markdown→LK converter targets whatever this turns out to be.
-3. **Does the API expose a whole-project export?** Unconfirmed — `LegendKeeperClient.exportProject()` and nightly backups (below) are stubbed against it.
-
-When the real API lands, grep for `SPEC-DRIFT` and reconcile each tagged field before trusting it.
+The three original critical unknowns are resolved: the API **does** expose the visibility model (`isHidden` on resources/documents/properties, `secret` blocks); page content is a **typed block tree** (the SDK's `@legendkeeper/sdk/blocks` has builders for the write side); there is **no** whole-project export.
 
 ### Nightly backups (`src/backup.ts`)
 
-A cron trigger (`triggers.crons` in `wrangler.jsonc`, currently `0 9 * * *`) invokes the Worker's `scheduled` handler in `src/index.ts`, which calls `runNightlyBackup(env)`. That function calls `LegendKeeperClient.exportProject()` (SPEC-DRIFT #3 above), writes the resulting `ProjectSnapshot` to the `BACKUPS` R2 bucket under `snapshots/YYYY-MM-DD.json`, and prunes anything older than 30 days (`RETENTION_DAYS` in `src/backup.ts`).
-
-This is intentionally stubbed against the fake client — whether whole-project export is even possible on the real API is unknown, so the goal right now is only to prove the R2 write + retention-prune path, not to produce a real usable backup. Requires the `convergence-gambit-backups` R2 bucket to exist (already created; R2 must be enabled on the Cloudflare account via the dashboard, then `npx wrangler r2 bucket create convergence-gambit-backups`) before `wrangler dev` or `deploy` will work. To exercise the cron locally, with `npm run dev` running: `curl "http://localhost:8787/cdn-cgi/handler/scheduled"` — confirmed working end-to-end against the fake client and local R2 emulation.
+A cron trigger (`triggers.crons` in `wrangler.jsonc`, currently `0 9 * * *`) invokes the Worker's `scheduled` handler in `src/index.ts`, which calls `runNightlyBackup(env)`. With no export endpoint, it walks the project through the seam (every resource + every page tab's block tree), sequentially with `REQUEST_SPACING_MS` (500ms, ~120 req/min) between reads to stay well under the key's 300 req/min budget shared with live sessions. Individual read failures are recorded in the snapshot's `errors` and logged; a failed `listResources` aborts so an empty snapshot never looks good. Writes `snapshots/YYYY-MM-DD.json` to the `BACKUPS` R2 bucket and prunes anything older than 30 days (`RETENTION_DAYS`). Not captured yet: map/board/timeline content, assets, trash. To exercise locally, with `npm run dev` running: `curl "http://localhost:8787/cdn-cgi/handler/scheduled"`.
 
 ### The charter (`src/charter.ts`)
 
@@ -57,7 +58,9 @@ This is intentionally stubbed against the fake client — whether whole-project 
 
 ### MCP tool pattern
 
-Tools are registered in `ConvergenceGambitMCP.init()` via `this.server.tool(name, description, zodShape, handler)`. Handlers return `text()` or `json()` (small helpers at the bottom of `src/index.ts` that wrap MCP's `{ content: [...] }` response shape). Errors from the `LegendKeeperClient` seam are caught in the handler and returned as `text(message, isError: true)` rather than thrown — see `get_resource` for the pattern to follow when adding new tools that hit the client.
+Tools are registered in `ConvergenceGambitMCP.init()` via `this.server.tool(name, description, zodShape, handler)`. Handlers return `text()` or `json()` (small helpers at the bottom of `src/index.ts`), wrapped in `guard()`, which turns any thrown error from the seam into `text(message, isError: true)` rather than a protocol failure. Views that need the tree get it from `this.index()` (the cached `ResourceIndex`), never by calling `listResources` themselves. Read views take the shared `audience` zod param.
+
+Tool output is markdown written for Claude to read, not raw API JSON: ids inline for follow-up calls, visibility explicit. The API key is ADMIN-role, so DM-only content is in every response by design; the `player` audience exists to *simulate* the player view, not as a security boundary.
 
 ### Authentication (`src/auth/`)
 
@@ -74,7 +77,7 @@ Every tool sits behind GitHub OAuth via `@cloudflare/workers-oauth-provider`. Th
 
 `Env` (`src/env.ts`) declares `MCP_OBJECT` (Durable Object), `BACKUPS` (R2, nightly backups), `OAUTH_KV` (OAuth state + client-approval storage), and the three OAuth secrets: `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET`, `COOKIE_ENCRYPTION_KEY`. All three secrets are real Worker secrets (`wrangler secret put`), not KV entries — don't add them as key-value pairs inside the `OAUTH_KV` namespace by mistake, they'd be inert there (the library only reads keys prefixed `client:...`) and wouldn't reach `env.*` at all. Local dev reads the same three names from `.dev.vars` (gitignored; `.dev.vars.example` documents the shape).
 
-Do **not** add `LK_API_KEY` or similar as a Worker secret until the real client (README phase 4) actually needs it — auth is in place now, but there's still no reason to hold a real credential before something exercises it.
+`LK_API_KEY` (optional `LK_PROJECT_ID`) is a Worker secret (`wrangler secret put`) and a `.dev.vars` entry. It must be an **ADMIN-role** project key: a lesser key silently omits hidden resources, hidden tabs and secret blocks, which would make every visibility answer wrong. Keys also require the project owner on a paid plan (`402 PAID_PLAN_REQUIRED` otherwise).
 
 ## Version drift note
 

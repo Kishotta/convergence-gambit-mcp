@@ -4,21 +4,31 @@ Bespoke, single-tenant MCP server connecting Claude to the campaign's
 LegendKeeper wiki. Two clients, one project, design philosophy baked into
 source. No multi-tenancy, no database, no apologies.
 
-**Current state: walking skeleton, now behind GitHub OAuth.** No LK API key
-yet, LegendKeeper calls backed by an in-memory fake seeded with campaign
-data. Every tool now sits behind OAuth (see "Authentication" below) — only
-GitHub account `Kishotta` is ever issued a token. Its job is to prove the
-full path: Claude mobile app → custom connector → GitHub login → Cloudflare
-Worker → `LegendKeeperClient` seam.
+**Current state: read-side tools against the live LegendKeeper v3 API,
+behind GitHub OAuth.** Reads go through the official `@legendkeeper/sdk`
+behind the `LegendKeeperClient` seam; without an `LK_API_KEY` an
+in-memory fake answers instead. Every tool sits behind OAuth (see
+"Authentication" below) — only GitHub account `Kishotta` is ever issued a
+token. Write tools come next, designed from what the read tools teach us.
 
-## Skeleton toolset
+## Read-side toolset
 
-| Tool             | Purpose                                                  |
-| ---------------- | -------------------------------------------------------- |
-| `ping`           | Proves the transport.                                    |
-| `get_charter`    | Serves the Architecture & Presentation Charter verbatim. |
-| `list_resources` | Proves the client seam (fake-backed).                    |
-| `get_resource`   | Proves parameterized reads.                              |
+| Tool              | Purpose                                                                  |
+| ----------------- | ------------------------------------------------------------------------ |
+| `ping`            | Proves the transport; says whether the live project or the fake answers. |
+| `get_charter`     | Serves the Architecture & Presentation Charter verbatim.                 |
+| `get_tree`        | The project hierarchy as an outline, hidden resources marked.            |
+| `read_article`    | One article as markdown: visibility, properties, every tab.              |
+| `search`          | LegendKeeper full-text search with matching passages.                    |
+| `find_by_tag`     | Tag-index queries — DM Dashboard / Field Notes previews.                 |
+| `list_tags`       | Tag usage, with how many carriers players can see.                       |
+| `get_page_blocks` | Raw block JSON for one tab (debugging, write planning).                  |
+
+Every view except `search` takes `audience`: `dm` (default — everything,
+with hidden tabs, secret blocks and hidden properties marked inline) or
+`player` (only what players can see right now). `read_article` also
+flags player-visible text that names a hidden article, the charter's "one
+accepted leak".
 
 ## Setup (day one)
 
@@ -43,8 +53,7 @@ npx @modelcontextprotocol/inspector
 Then on the phone: **Customize → Connectors → Add custom connector**, paste
 `https://convergence-gambit-mcp.<account>.workers.dev/mcp`. Claude will
 prompt a GitHub login before the connector activates. Once connected, ask
-Claude to `ping` and `list_resources`. If Morte comes back, the skeleton
-walks.
+Claude to `ping` (it reports live vs. fake) and `get_tree`.
 
 ## Authentication
 
@@ -124,30 +133,29 @@ deploy` work as before, just with GitHub login gating `/mcp` and `/sse`.
 Everything meaningful lives behind one interface:
 
 ```
-src/lk/types.ts   LegendKeeperClient + domain types (from the API screenshot)
-src/lk/fake.ts    In-memory implementation, seeded with campaign articles
-src/index.ts      MCP tools — talk only to the interface
+src/lk/types.ts   LegendKeeperClient + LK types (re-exported from the SDK)
+src/lk/sdk.ts     Live implementation over @legendkeeper/sdk — the only runtime SDK import
+src/lk/fake.ts    In-memory implementation for keyless local dev
+src/lk/client.ts  Picks one: LK_API_KEY set → SDK, else fake
+src/wiki/         Above the seam: resource index, block→markdown renderer, views
+src/index.ts      MCP tools — talk only to the interface and src/wiki/
 ```
 
-When the real API ships, we add `src/lk/http.ts` implementing
-`LegendKeeperClient` against the v2 endpoints and swap one constructor
-call in `index.ts`. Tools never change at cutover.
+The SDK is a beta regenerated on every API release, so it is pinned to an
+exact version and confined to `src/lk/`. Upgrading it should mean editing
+`sdk.ts`/`types.ts`, never the tools. Fields the newer spec in `docs/` has
+but the pinned SDK doesn't type yet are tagged `SPEC-DRIFT` in
+`src/lk/types.ts`.
 
-Speculative type fields are tagged `SPEC-DRIFT` — grep for them when the
-real docs land.
-
-## Nightly backups (stub)
+## Nightly backups
 
 A cron trigger (`0 9 * * *` in `wrangler.jsonc`) calls `src/backup.ts`
-nightly, which exports the project via `LegendKeeperClient.exportProject()`
-and writes a snapshot to the `BACKUPS` R2 bucket (`convergence-gambit-backups`),
-pruning anything older than 30 days.
-
-Whether the real LegendKeeper API can export a whole project at all is
-unconfirmed (`SPEC-DRIFT` **CRITICAL UNKNOWN #3** in `src/lk/types.ts`) —
-today this runs against the fake client, which proves the R2 storage and
-retention path end-to-end with fake data. When the real answer is known,
-only `src/lk/client.ts` needs to change.
+nightly. The v3 API has no whole-project export, so the backup walks the
+project through the seam (every resource, every page tab's block tree),
+throttled to ~120 requests/minute to leave the key's 300/minute budget for
+live use, and writes one snapshot to the `BACKUPS` R2 bucket
+(`convergence-gambit-backups`), pruning anything older than 30 days. Map,
+board and timeline content isn't captured yet.
 
 One-time setup before this can deploy: R2 must be enabled on the Cloudflare
 account (dashboard only, not scriptable), then create the bucket:
@@ -164,29 +172,23 @@ To exercise the cron locally, with `npm run dev` already running:
 1. **Walking skeleton** _(done)_ — authless, fake-backed, deployed,
    connected from the phone.
 2. **Auth** _(done)_ — GitHub OAuth in front of every tool (see
-   "Authentication" above), allowlisted to `Kishotta` only. Only now, with
-   auth in place, is it safe to move on to real LegendKeeper credentials:
-   `npx wrangler secret put LK_API_KEY` / `LK_PROJECT_ID`.
+   "Authentication" above), allowlisted to `Kishotta` only.
 3. **Custom domain** — point `connoreaves.dev` (or `kishotta.com`) DNS at
    Cloudflare, uncomment the route in `wrangler.jsonc`, redeploy to
    `mcp.connoreaves.dev`.
-4. **Real client** — `src/lk/http.ts` against the shipped API.
-5. **Charter-aware tools** — `create_npc_article`, `create_location_article`,
-   `stage_reveal`, the markdown→LK converter. Designed only after phase 4
-   confirms the two critical unknowns.
+4. **Real client, read side** _(done)_ — `src/lk/sdk.ts` over the official
+   SDK, plus the read tools above. Needs `npx wrangler secret put LK_API_KEY`
+   (an ADMIN-role project key; `LK_PROJECT_ID` optional).
+5. **Charter-aware write tools** — `create_npc_article`,
+   `create_location_article`, `stage_reveal`, the markdown→blocks
+   converter. Designed from real usage of the read tools.
 
-Phases 4 and 5 both trigger on the same event (LegendKeeper publishing the
-v2 API docs) and are the reason this repo currently has nothing left to do
-— see [`docs/real-api-cutover.md`](docs/real-api-cutover.md) for the full
-runbook for that day, written up in advance so it isn't reconstructed from
-scratch later.
+## What the real API answered
 
-## The two critical unknowns (verify the day the docs drop)
-
-1. **Does the API expose the visibility model?** Element/tab/block secrecy
-   is load-bearing for the whole architecture charter. If absent, every
-   write tool must warn that a manual secrecy pass is required before the
-   article is player-safe.
-2. **What format do `page` documents accept?** Expected: ProseMirror-style
-   JSON, not markdown. The converter targets whatever this turns out to be;
-   until then `LKDocument.content` is deliberately `unknown`.
+1. **Visibility model: exposed.** `isHidden` on resources, documents (tabs)
+   and properties, and `secret` blocks. Effective visibility (a hidden
+   ancestor hides its subtree) is computed in `src/wiki/index.ts`.
+2. **Page format: a typed block tree**, not ProseMirror and not markdown.
+   The SDK ships block builders (`@legendkeeper/sdk/blocks`) the write side
+   can target.
+3. **Whole-project export: none.** The nightly backup synthesizes one.

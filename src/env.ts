@@ -14,5 +14,13 @@ export interface Env {
     GITHUB_CLIENT_SECRET: string;
     /** HMAC secret for signing the client-approval cookie. */
     COOKIE_ENCRYPTION_KEY: string;
-    // Phase 4, after the real LK client ships: LK_API_KEY: string; LK_PROJECT_ID: string;
+    /**
+     * LegendKeeper project API key (Project Settings → Developers → API
+     * Keys). Use an ADMIN-role key: hidden resources, hidden tabs and
+     * secret blocks are invisible to anything less, and tags.list requires
+     * it. Unset → the in-memory fake answers instead (see src/lk/client.ts).
+     */
+    LK_API_KEY?: string;
+    /** Optional; saves the SDK one project-resolution request per instance. */
+    LK_PROJECT_ID?: string;
 }
