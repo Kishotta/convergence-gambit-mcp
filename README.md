@@ -18,7 +18,7 @@ token. Write tools come next, designed from what the read tools teach us.
 | `ping`            | Proves the transport; says whether the live project or the fake answers. |
 | `get_charter`     | Serves the Architecture & Presentation Charter verbatim.                 |
 | `get_tree`        | The project hierarchy as an outline, hidden resources marked.            |
-| `read_article`    | One article as markdown: visibility, properties, every tab.              |
+| `read_article`    | One article as markdown: visibility, properties, pages, maps, timelines.  |
 | `search`          | LegendKeeper full-text search with matching passages.                    |
 | `find_by_tag`     | Tag-index queries — DM Dashboard / Field Notes previews.                 |
 | `list_tags`       | Tag usage, with how many carriers players can see.                       |
@@ -170,11 +170,11 @@ but the pinned SDK doesn't type yet are tagged `SPEC-DRIFT` in
 
 A cron trigger (`0 9 * * *` in `wrangler.jsonc`) calls `src/backup.ts`
 nightly. The v3 API has no whole-project export, so the backup walks the
-project through the seam (every resource, every page tab's block tree),
+project through the seam (every resource, and every page, map and timeline tab),
 throttled to ~120 requests/minute to leave the key's 300/minute budget for
 live use, and writes one snapshot to the `BACKUPS` R2 bucket
-(`convergence-gambit-backups`), pruning anything older than 30 days. Map,
-board and timeline content isn't captured yet.
+(`convergence-gambit-backups`), pruning anything older than 30 days. Board
+content and assets aren't captured yet.
 
 One-time setup before this can deploy: R2 must be enabled on the Cloudflare
 account (dashboard only, not scriptable), then create the bucket:

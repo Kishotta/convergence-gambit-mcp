@@ -6,7 +6,9 @@
  * deliberately exercising every layer of the visibility model: a hidden
  * element (Plots) with a non-hidden child, a hidden tab, a secret block,
  * a hidden sidebar property, and visible text that mentions a hidden
- * element (the charter's "one accepted leak").
+ * element (the charter's "one accepted leak"). Sigil's map and the campaign
+ * timeline cover the same ground for pins and events: hidden ones, visible
+ * ones linking to hidden articles, and a hidden map folder.
  */
 
 import type {
@@ -14,17 +16,24 @@ import type {
     DocumentBlocks,
     LegendKeeperClient,
     LKDocument,
+    MapFeature,
     PropertyBlock,
     Resource,
     ResourceListItem,
     Run,
     SearchResult,
+    TimelineEvent,
+    TimelineLane,
 } from "./types";
 
 interface SeedTab {
     name: string;
     isHidden?: boolean;
-    blocks: Block[];
+    blocks?: Block[];
+    /** Makes this a map tab. */
+    features?: MapFeature[];
+    /** Makes this a timeline tab. */
+    timeline?: { lanes: TimelineLane[]; events: TimelineEvent[] };
 }
 
 interface SeedResource {
@@ -41,6 +50,8 @@ interface SeedResource {
 interface Row {
     resource: Resource;
     blocks: Map<string, DocumentBlocks>;
+    features: Map<string, MapFeature[]>;
+    timelines: Map<string, { lanes: TimelineLane[]; events: TimelineEvent[] }>;
 }
 
 const STAMP = "2026-10-01T00:00:00Z";
@@ -57,6 +68,34 @@ const h = (level: number, text: string): Block => ({
 });
 const secret = (...children: Block[]): Block => ({ kind: "secret", children });
 
+const pin = (id: string, name: string, extra: Partial<MapFeature> = {}): MapFeature => ({
+    id,
+    name,
+    type: "pin",
+    pos: [0, 0],
+    rank: id,
+    ...extra,
+});
+const sessionDate = (day: number) => ({
+    year: 1491,
+    month: 1,
+    monthName: "Hammer",
+    day,
+    hour: 0,
+    minute: 0,
+    era: { id: "dr", name: "Dale Reckoning", abbr: "DR" },
+});
+const event = (id: string, day: number, name: string, extra: Partial<TimelineEvent> = {}): TimelineEvent => ({
+    id,
+    laneId: "lane0001",
+    type: "event",
+    start: day * 1440,
+    startDate: sessionDate(day),
+    formattedStart: `${day} Hammer 1491 DR`,
+    name,
+    ...extra,
+});
+
 const SEED: SeedResource[] = [
     {
         id: "sigil001",
@@ -67,6 +106,21 @@ const SEED: SeedResource[] = [
             {
                 name: "Overview",
                 blocks: [p(t("The City of Doors, perched on the inside of a ring atop an infinite spire."))],
+            },
+            {
+                name: "Map",
+                features: [
+                    { id: "feat0001", name: "Hive Ward", type: "folder", rank: "a0" },
+                    pin("feat0002", "Parisa's stand", { parentId: "feat0001", uri: "lk://resources/parisa01" }),
+                    pin("feat0003", "Mortuary", { parentId: "feat0001", uri: "lk://resources/mortuary" }),
+                    { id: "feat0004", name: "Lower Ward", type: "region", rank: "a1", polygon: [[0, 0], [1, 0], [1, 1]] },
+                    pin("feat0005", "Bank of Abbathor", { parentId: "feat0004", uri: "lk://resources/bank0001" }),
+                    // Not hidden itself, but links to a hidden article: LK auto-hides it.
+                    pin("feat0006", "The Bazaar office", { uri: "lk://resources/shem0001" }),
+                    pin("feat0007", "Unmarked door", { isHidden: true }),
+                    { id: "feat0008", name: "DM markers", type: "folder", rank: "a2", isHidden: true },
+                    pin("feat0009", "Ambush point", { parentId: "feat0008" }),
+                ],
             },
         ],
     },
@@ -160,6 +214,24 @@ const SEED: SeedResource[] = [
         tabs: [{ name: "Overview", blocks: [p(t("Where the party woke up."))] }],
     },
     {
+        id: "campaign",
+        name: "The Convergence Gambit",
+        tabs: [
+            { name: "Overview", blocks: [p(t("Campaign overview."))] },
+            {
+                name: "Campaign Timeline",
+                timeline: {
+                    lanes: [{ id: "lane0001", name: "Sessions", rank: "a0", size: "lg" }],
+                    events: [
+                        event("evt00001", 1, "Session 1: Grave Escape", { uri: "lk://resources/mortuary" }),
+                        event("evt00002", 3, "Shemeshka takes notice", { uri: "lk://resources/shem0001", isHidden: true }),
+                        event("evt00003", 4, "Session 2: A debt comes due", { uri: "lk://resources/shem0001" }),
+                    ],
+                },
+            },
+        ],
+    },
+    {
         id: "plots001",
         name: "Plots",
         isHidden: true,
@@ -193,19 +265,24 @@ export class FakeLegendKeeperClient implements LegendKeeperClient {
 
     private seed(seed: SeedResource, index: number): void {
         const blocks = new Map<string, DocumentBlocks>();
+        const features = new Map<string, MapFeature[]>();
+        const timelines = new Map<string, { lanes: TimelineLane[]; events: TimelineEvent[] }>();
         const documents: LKDocument[] = seed.tabs.map((tab, tabIndex) => {
             const id = `${seed.id}d${tabIndex}`;
-            blocks.set(id, {
-                id,
-                version: "1",
-                schema: 1,
-                text: "",
-                blocks: tab.blocks,
-            });
+            let type: LKDocument["type"] = "page";
+            if (tab.features) {
+                type = "map";
+                features.set(id, tab.features);
+            } else if (tab.timeline) {
+                type = "time";
+                timelines.set(id, tab.timeline);
+            } else {
+                blocks.set(id, { id, version: "1", schema: 1, text: "", blocks: tab.blocks ?? [] });
+            }
             return {
                 id,
                 name: tab.name,
-                type: "page",
+                type,
                 rank: `a${tabIndex}`,
                 isHidden: tab.isHidden ?? false,
                 createdAt: STAMP,
@@ -228,6 +305,8 @@ export class FakeLegendKeeperClient implements LegendKeeperClient {
                 updatedAt: STAMP,
             },
             blocks,
+            features,
+            timelines,
         });
     }
 
@@ -262,6 +341,26 @@ export class FakeLegendKeeperClient implements LegendKeeperClient {
         const doc = this.row(resourceId).blocks.get(documentId);
         if (!doc) throw new Error(`Document not found: ${documentId}`);
         return doc;
+    }
+
+    async listMapFeatures(resourceId: string, documentId: string): Promise<MapFeature[]> {
+        const features = this.row(resourceId).features.get(documentId);
+        if (!features) throw new Error(`Map document not found: ${documentId}`);
+        return features;
+    }
+
+    async listTimelineLanes(resourceId: string, documentId: string): Promise<TimelineLane[]> {
+        return this.timeline(resourceId, documentId).lanes;
+    }
+
+    async listTimelineEvents(resourceId: string, documentId: string): Promise<TimelineEvent[]> {
+        return this.timeline(resourceId, documentId).events;
+    }
+
+    private timeline(resourceId: string, documentId: string) {
+        const timeline = this.row(resourceId).timelines.get(documentId);
+        if (!timeline) throw new Error(`Timeline document not found: ${documentId}`);
+        return timeline;
     }
 
     async search(query: string, limit = 32): Promise<SearchResult[]> {
