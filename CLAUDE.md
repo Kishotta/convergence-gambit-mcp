@@ -15,10 +15,12 @@ npm install
 npx wrangler login        # one-time, opens browser
 npm run typecheck         # tsc --noEmit — run after any change
 npm run dev               # local server at http://localhost:8787/mcp
-npx wrangler deploy       # deploy (no npm script wraps this yet)
+npx wrangler deploy       # manual deploy — normally CI does this (below)
 ```
 
-There is no test suite and no lint script currently configured. `npm run typecheck` is the only automated check — always run it before considering a change done.
+There is no test suite and no lint script currently configured. `npm run typecheck` is the only automated check — always run it before considering a change done. `npx wrangler deploy --dry-run --outdir dist` additionally bundles the Worker exactly as a deploy would (no Cloudflare login needed), catching bad imports and Workers-incompatible modules that tsc can't.
+
+**CI/CD** (`.github/workflows/ci.yml`): every pull request and push runs `npm ci`, typecheck and the dry-run bundle; a push to `main` then deploys via `cloudflare/wrangler-action` (GitHub environment `production`, one deploy at a time). So merging to `main` *is* deploying. The workflow holds only `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` (repo secrets); the Worker's runtime secrets stay in Cloudflare and `wrangler deploy` leaves them untouched — never add them to the workflow. `.github/dependabot.yml` opens a daily PR for each new `@legendkeeper/sdk` release so CI tests the upgrade against the seam before it ships.
 
 `npm run dev` now requires `.dev.vars` populated (`GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET`, `COOKIE_ENCRYPTION_KEY` — see README's "Authentication" section) or the OAuth-gated routes will 401/500 immediately.
 

@@ -55,6 +55,25 @@ Then on the phone: **Customize → Connectors → Add custom connector**, paste
 prompt a GitHub login before the connector activates. Once connected, ask
 Claude to `ping` (it reports live vs. fake) and `get_tree`.
 
+## Deploys (CI/CD)
+
+`.github/workflows/ci.yml` typechecks and bundles every pull request and
+push, and deploys every push to `main`. Merging is shipping. Manual
+`npx wrangler deploy` still works as a fallback.
+
+One-time setup, as GitHub repository secrets (Settings → Secrets and
+variables → Actions):
+
+- `CLOUDFLARE_API_TOKEN` — Cloudflare dashboard → My Profile → API Tokens →
+  Create Token → **Edit Cloudflare Workers** template, scoped to this
+  account. If a deploy fails on the R2 or KV binding, add **Workers R2
+  Storage: Edit** / **Workers KV Storage: Edit** to the token.
+- `CLOUDFLARE_ACCOUNT_ID` — from `npx wrangler whoami`.
+
+The Worker's own secrets (`LK_API_KEY`, OAuth) stay in Cloudflare; deploys
+leave them alone. Dependabot (`.github/dependabot.yml`) opens a PR for each
+new `@legendkeeper/sdk` release so CI vets SDK upgrades before they ship.
+
 ## Authentication
 
 Every tool sits behind GitHub OAuth (`@cloudflare/workers-oauth-provider` +

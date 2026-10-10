@@ -1,0 +1,14 @@
+# The LegendKeeper SDK is a beta regenerated on every API release and pinned
+# to an exact version (see CLAUDE.md). Dependabot opens a PR for each new
+# release; CI typechecks and bundles it against our seam, so a breaking SDK
+# change shows up as a red PR instead of a surprise.
+version: 2
+updates:
+    - package-ecosystem: npm
+      directory: /
+      schedule:
+          interval: daily
+      allow:
+          - dependency-name: "@legendkeeper/sdk"
+      commit-message:
+          prefix: "deps"
