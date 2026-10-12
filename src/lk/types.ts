@@ -45,6 +45,10 @@ export type TimelineEvent = Schemas["Event"];
  */
 export type Mention = Extract<Run, { mention: unknown }>["mention"];
 
+/** The image formats the asset library stores. */
+export const IMAGE_CONTENT_TYPES = ["image/jpeg", "image/png", "image/gif", "image/webp"] as const;
+export type ImageContentType = (typeof IMAGE_CONTENT_TYPES)[number];
+
 /**
  * The virtual root of templates. A top-level template has this as its
  * `parentId`; a resource under a template is a template too. It is a
@@ -63,8 +67,8 @@ export const TEMPLATES_ROOT_ID = "templates";
  * in-memory fake (src/lk/fake.ts) implements it for local dev without an
  * API key.
  *
- * Read-only for now. Write methods arrive with the charter-aware write
- * tools, designed against the real block model rather than guessed ahead.
+ * Mostly reads. Write methods are added one at a time, as a charter-aware
+ * write tool needs them, rather than guessed ahead.
  */
 export interface LegendKeeperClient {
     /** Which backend this is, so `ping` can say whether the data is real. */
@@ -87,4 +91,43 @@ export interface LegendKeeperClient {
     listTimelineLanes(resourceId: string, documentId: string): Promise<TimelineLane[]>;
     /** A timeline document's events (all pages), ordered by start. */
     listTimelineEvents(resourceId: string, documentId: string): Promise<TimelineEvent[]>;
+
+    /**
+     * A new resource copied from a template: its fields, sidebar properties
+     * and documents with their content, under new ids. Throws if
+     * `templateId` is not a template.
+     */
+    createFromTemplate(params: { templateId: string; name: string; parentId?: string }): Promise<Resource>;
+    /** Changes only the fields given. */
+    updateResource(resourceId: string, changes: { tags?: string[]; isHidden?: boolean }): Promise<Resource>;
+    /**
+     * Gives an id to every block of a page that lacks one. Pages written in
+     * the app before block ids existed lack them, and a block needs an id
+     * to be addressed or echoed.
+     */
+    assignBlockIds(resourceId: string, documentId: string): Promise<void>;
+    /**
+     * Stores an image in the project's asset library, in the root folder
+     * named `folder` (created if missing) or at the root. An image block
+     * accepts only the `url` this returns: a URL from anywhere else is
+     * rejected on write.
+     */
+    uploadImage(params: {
+        data: Uint8Array;
+        contentType: ImageContentType;
+        name: string;
+        folder?: string;
+    }): Promise<{ id: string; url: string }>;
+    /**
+     * Replaces a page's whole block tree. An `unsupported` block survives
+     * only when echoed by id; leaving it out deletes content the API cannot
+     * read. With `ifMatch` (a `DocumentBlocks.version`), throws if the page
+     * changed since that read.
+     */
+    replaceDocumentBlocks(
+        resourceId: string,
+        documentId: string,
+        blocks: Block[],
+        ifMatch?: string,
+    ): Promise<DocumentBlocks>;
 }

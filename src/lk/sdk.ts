@@ -10,7 +10,9 @@
 import { LegendKeeper, LegendKeeperError } from "@legendkeeper/sdk";
 
 import type {
+    Block,
     DocumentBlocks,
+    ImageContentType,
     LegendKeeperClient,
     MapFeature,
     Resource,
@@ -114,6 +116,70 @@ export class SdkLegendKeeperClient implements LegendKeeperClient {
             for await (const event of first) events.push(event);
             return events;
         });
+    }
+
+    async createFromTemplate(params: {
+        templateId: string;
+        name: string;
+        parentId?: string;
+    }): Promise<Resource> {
+        return this.call(() =>
+            this.lk.resources.createFromTemplate({ projectId: this.projectId }, params),
+        );
+    }
+
+    async updateResource(
+        resourceId: string,
+        changes: { tags?: string[]; isHidden?: boolean },
+    ): Promise<Resource> {
+        return this.call(() =>
+            this.lk.resources.update({ projectId: this.projectId, resourceId }, changes),
+        );
+    }
+
+    async assignBlockIds(resourceId: string, documentId: string): Promise<void> {
+        await this.call(() =>
+            this.lk.documents.assignBlockIds({ projectId: this.projectId, resourceId, documentId }),
+        );
+    }
+
+    async uploadImage(params: {
+        data: Uint8Array;
+        contentType: ImageContentType;
+        name: string;
+        folder?: string;
+    }): Promise<{ id: string; url: string }> {
+        return this.call(async () => {
+            const { folder, ...image } = params;
+            const folderId = folder ? await this.assetFolder(folder) : undefined;
+            const asset = await this.lk.assets.uploadImage({ ...image, folderId, projectId: this.projectId });
+            if (!asset.url) throw new Error(`Uploaded image ${asset.id} came back without a url`);
+            return { id: asset.id, url: asset.url };
+        });
+    }
+
+    /** The id of the root asset folder with this name, created if there is none. */
+    private async assetFolder(name: string): Promise<string> {
+        const root = await this.lk.assets.list({ projectId: this.projectId }, { limit: PAGE_SIZE });
+        for await (const asset of root) {
+            if (asset.type === "FOLDER" && asset.name === name) return asset.id;
+        }
+        const created = await this.lk.assets.createFolder({ projectId: this.projectId }, { name });
+        return created.id;
+    }
+
+    async replaceDocumentBlocks(
+        resourceId: string,
+        documentId: string,
+        blocks: Block[],
+        ifMatch?: string,
+    ): Promise<DocumentBlocks> {
+        return this.call(() =>
+            this.lk.documents.replaceBlocks(
+                { projectId: this.projectId, resourceId, documentId },
+                { blocks, ifMatch },
+            ),
+        );
     }
 
     /**

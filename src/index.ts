@@ -5,7 +5,7 @@
  * philosophy is baked into source, not configuration: this server exists
  * to make LegendKeeper article work follow the architecture charter.
  *
- * Read-side toolset (writes come later, charter-aware):
+ * Read-side toolset:
  *   - ping            proves the transport; reports which LK backend answers
  *   - get_charter     serves the architecture charter verbatim
  *   - get_tree        the project hierarchy as an outline
@@ -15,6 +15,9 @@
  *   - find_by_tag     tag-index queries (DM Dashboard / Field Notes previews)
  *   - list_tags       tag usage, with a player-safety count per tag
  *   - get_page_blocks raw block JSON, for debugging and write-tool planning
+ *
+ * Write-side toolset, one charter-aware tool per kind of article:
+ *   - create_magic_item  a new, hidden item from the Magic Item templates
  *
  * The views take an audience: "dm" (everything, concealed layers marked)
  * or "player" (only what's revealed). See src/wiki/.
@@ -41,6 +44,7 @@ import type { Env } from "./env";
 import { createLegendKeeperClient } from "./lk/client";
 import type { LegendKeeperClient } from "./lk/types";
 import { ResourceIndex } from "./wiki/index";
+import { createMagicItem, ITEM_KINDS, RARITIES, type ItemKind } from "./wiki/items";
 import { articleView, searchView, taggedView, tagsView, templatesView, treeView } from "./wiki/views";
 
 /**
@@ -187,6 +191,53 @@ export class ConvergenceGambitMCP extends McpAgent<Env, Record<string, never>, P
             },
             async ({ resourceId, documentId }) =>
                 guard(async () => json(await this.lk.getDocumentBlocks(resourceId, documentId))),
+        );
+
+        this.server.tool(
+            "create_magic_item",
+            "WRITES to the wiki: creates a new magic item article from the Consumable, Equipment or " +
+                "Wondrous Item template, under Magic Items, hidden from players, and returns it as " +
+                "read_article would. Campaign rule: a Common item shows its mechanics; from Uncommon up " +
+                "they go in a secret block until the party identifies the item. So keep `description` to " +
+                "what a character perceives, and put rules text in `mechanics`. Text fields are markdown: " +
+                "paragraphs, `- ` lists, **bold**, *italic*, and mentions as [Name](lk:resourceId). " +
+                "An optional `imageUrl` is downloaded into the project's asset library and shown beside " +
+                "the description. Refuses a name an existing magic item already has. Where the item is found is not an " +
+                "input: the article's Backlinks fill in when another article mentions it.",
+            {
+                name: z.string().trim().min(1).max(500),
+                kind: z
+                    .enum(Object.keys(ITEM_KINDS) as [ItemKind, ...ItemKind[]])
+                    .describe("Which template: consumable (potions, drinks, one-use), equipment (worn or wielded: weapons, armor, rings), wondrous (everything else)."),
+                rarity: z.enum(RARITIES),
+                requiresAttunement: z.boolean().default(false),
+                tags: z
+                    .array(z.string().trim().min(1).max(100))
+                    .default([])
+                    .describe('Form tags beyond kind, rarity and attunement, which are added for you: e.g. "Ring", "Weapon", "Potion". Check list_tags for existing vocabulary.'),
+                description: z.string().trim().min(1).describe("Player-facing: appearance, lore, and anything apparent without identifying the item."),
+                mechanics: z.string().optional().describe("Rules text. Shown for Common items, secret otherwise."),
+                curse: z.string().optional().describe("Always written to a secret block of its own, after the mechanics."),
+                imageUrl: z
+                    .string()
+                    .url()
+                    .regex(/^https?:\/\//, "must be an http(s) URL")
+                    .optional()
+                    .describe("A web image (JPEG, PNG, GIF or WebP, up to 10 MB) of the item. It is copied into LegendKeeper, not hotlinked. Omit it for an item with no artwork."),
+                mechanicsRevealed: z
+                    .boolean()
+                    .optional()
+                    .describe("Overrides the rarity rule: true writes mechanics as visible text, false as a secret."),
+                parentId: z.string().optional().describe("Where to create it. Default: the Magic Items folder."),
+            },
+            async (input) =>
+                guard(async () => {
+                    const id = await createMagicItem(this.lk, await this.index(), input);
+                    // The cached index predates the new article.
+                    this.indexCache = undefined;
+                    const article = await articleView(this.lk, await this.index(), id, { audience: "dm" });
+                    return text(`Created. It is hidden from players until you reveal it.\n\n${article}`);
+                }),
         );
     }
 
