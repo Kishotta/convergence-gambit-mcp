@@ -31,6 +31,17 @@ with hidden tabs, secret blocks and hidden properties marked inline) or
 flags player-visible text that names a hidden article, the charter's "one
 accepted leak".
 
+## Write-side toolset
+
+| Tool                | Purpose                                                                 |
+| ------------------- | ----------------------------------------------------------------------- |
+| `create_magic_item` | A new, hidden item article from the Magic Item templates, populated.    |
+
+Write tools are specific on purpose: each knows one kind of article, its
+template, its tags and where its content goes. `create_magic_item` puts
+mechanics in a secret block for anything above Common, since the party has
+to identify those first.
+
 ## Setup (day one)
 
 Prereqs: Node 18+, a free Cloudflare account.
@@ -199,9 +210,10 @@ To exercise the cron locally, with `npm run dev` already running:
 4. **Real client, read side** _(done)_ — `src/lk/sdk.ts` over the official
    SDK, plus the read tools above. Needs `npx wrangler secret put LK_API_KEY`
    (an ADMIN-role project key; `LK_PROJECT_ID` optional).
-5. **Charter-aware write tools** — `create_npc_article`,
-   `create_location_article`, `stage_reveal`, the markdown→blocks
-   converter. Designed from real usage of the read tools.
+5. **Charter-aware write tools** _(started)_ — `create_magic_item` and a
+   small markdown→blocks converter (`src/wiki/compose.ts`) exist. Still to
+   come: `create_npc_article`, `create_location_article`, `stage_reveal`.
+   Designed from real usage of the tools so far.
 
 ## What the real API answered
 

@@ -8,15 +8,20 @@
  * a hidden sidebar property, and visible text that mentions a hidden
  * element (the charter's "one accepted leak"). Sigil's map and the campaign
  * timeline cover the same ground for pins and events: hidden ones, visible
- * ones linking to hidden articles, and a hidden map folder. Two templates
- * (one with a nested resource, both carrying tags real articles use) check
- * that skeletons stay out of the wiki's tree and tag counts.
+ * ones linking to hidden articles, and a hidden map folder. Templates
+ * (some nested, carrying tags real articles use) check that skeletons stay
+ * out of the wiki's tree and tag counts. The Magic Item templates mirror the
+ * live ones for create_magic_item: an unreadable Tags block without an id,
+ * an empty image slot, then a placeholder paragraph and a placeholder secret.
+ *
+ * The write methods change this in-memory copy only.
  */
 
 import { TEMPLATES_ROOT_ID } from "./types";
 import type {
     Block,
     DocumentBlocks,
+    ImageContentType,
     LegendKeeperClient,
     LKDocument,
     MapFeature,
@@ -58,6 +63,7 @@ interface Row {
 }
 
 const STAMP = "2026-10-01T00:00:00Z";
+const ASSET_HOST = "https://assets.fake/";
 
 const t = (text: string): Run => ({ text });
 const mention = (resourceId: string, text: string): Run => ({
@@ -70,6 +76,27 @@ const h = (level: number, text: string): Block => ({
     content: [t(text)],
 });
 const secret = (...children: Block[]): Block => ({ kind: "secret", children });
+/** As the API returns one from a page written before block ids existed. */
+const unreadable = (): Block => ({ kind: "unsupported" }) as Block;
+const itemTemplate = (id: string, name: string, tags: string[], parentId: string): SeedResource => ({
+    id,
+    name,
+    parentId,
+    tags,
+    isHidden: true,
+    tabs: [
+        {
+            name: "Main",
+            blocks: [
+                unreadable(),
+                { kind: "image", url: "", title: "Image", isTitleHidden: true, layout: "wrapRight", width: 50 },
+                p(t("Description")),
+                secret(p(t("Secret"))),
+                p(),
+            ],
+        },
+    ],
+});
 
 const pin = (id: string, name: string, extra: Partial<MapFeature> = {}): MapFeature => ({
     id,
@@ -256,6 +283,15 @@ const SEED: SeedResource[] = [
         ],
     },
     {
+        id: "items001",
+        name: "Magic Items",
+        tabs: [{ name: "Overview", blocks: [p(t("Items as they're crafted."))] }],
+    },
+    itemTemplate("tplitem0", "Magic Item", ["Magic Item"], TEMPLATES_ROOT_ID),
+    itemTemplate("tplitem1", "Consumable", ["Magic Item", "Consumable"], "tplitem0"),
+    itemTemplate("tplitem2", "Equipment", ["Magic Item", "Equipment"], "tplitem0"),
+    itemTemplate("tplitem3", "Wondrous Item", ["Magic Item", "Wondrous Item"], "tplitem0"),
+    {
         id: "tplchar1",
         name: "Character",
         parentId: TEMPLATES_ROOT_ID,
@@ -285,6 +321,8 @@ export class FakeLegendKeeperClient implements LegendKeeperClient {
     readonly backend = "fake";
 
     private rows = new Map<string, Row>();
+    /** Feeds the ids of resources, documents and blocks created by writes. */
+    private created = 0;
 
     constructor() {
         SEED.forEach((seed, index) => this.seed(seed, index));
@@ -389,6 +427,95 @@ export class FakeLegendKeeperClient implements LegendKeeperClient {
         const timeline = this.row(resourceId).timelines.get(documentId);
         if (!timeline) throw new Error(`Timeline document not found: ${documentId}`);
         return timeline;
+    }
+
+    async createFromTemplate(params: {
+        templateId: string;
+        name: string;
+        parentId?: string;
+    }): Promise<Resource> {
+        const source = this.row(params.templateId);
+        if (!this.isTemplate(source.resource)) throw new Error(`Not a template: ${params.templateId}`);
+        if (params.parentId) this.row(params.parentId);
+
+        const id = `new${++this.created}`;
+        const blocks = new Map<string, DocumentBlocks>();
+        const documents = source.resource.documents.map((doc, docIndex) => {
+            const copy = { ...doc, id: `${id}d${docIndex}` };
+            const content = source.blocks.get(doc.id);
+            if (content) blocks.set(copy.id, { ...structuredClone(content), id: copy.id });
+            return copy;
+        });
+        const resource: Resource = {
+            ...structuredClone(source.resource),
+            id,
+            name: params.name,
+            parentId: params.parentId,
+            rank: `z${this.created}`,
+            documents,
+        };
+        this.rows.set(id, { resource, blocks, features: new Map(), timelines: new Map() });
+        return resource;
+    }
+
+    async updateResource(
+        resourceId: string,
+        changes: { tags?: string[]; isHidden?: boolean },
+    ): Promise<Resource> {
+        const { resource } = this.row(resourceId);
+        if (changes.tags) resource.tags = changes.tags;
+        if (changes.isHidden !== undefined) resource.isHidden = changes.isHidden;
+        return resource;
+    }
+
+    async assignBlockIds(resourceId: string, documentId: string): Promise<void> {
+        const doc = await this.getDocumentBlocks(resourceId, documentId);
+        this.giveIds(doc.blocks);
+        doc.version = String(Number(doc.version) + 1);
+    }
+
+    async replaceDocumentBlocks(
+        resourceId: string,
+        documentId: string,
+        blocks: Block[],
+        ifMatch?: string,
+    ): Promise<DocumentBlocks> {
+        const doc = await this.getDocumentBlocks(resourceId, documentId);
+        if (ifMatch !== undefined && ifMatch !== doc.version) {
+            throw new Error(`Document ${documentId} changed since version ${ifMatch}`);
+        }
+        const held = new Set(doc.blocks.filter((b) => b.kind === "unsupported").map((b) => b.id));
+        // As in the API, an image is an asset of the project or one the page already holds.
+        const heldImages = new Set(doc.blocks.flatMap((b) => (b.kind === "image" ? [b.url] : [])));
+        for (const block of blocks) {
+            if (block.kind === "unsupported" && !(block.id && held.has(block.id))) {
+                throw new Error(`UNSUPPORTED_KIND: the document holds no unsupported block ${block.id}`);
+            }
+            if (block.kind === "image" && !block.url.startsWith(ASSET_HOST) && !heldImages.has(block.url)) {
+                throw new Error(`VALIDATION_ERROR: ${block.url} is not an image asset of this project`);
+            }
+        }
+        doc.blocks = structuredClone(blocks);
+        this.giveIds(doc.blocks);
+        doc.version = String(Number(doc.version) + 1);
+        return doc;
+    }
+
+    async uploadImage(params: {
+        data: Uint8Array;
+        contentType: ImageContentType;
+        name: string;
+        folder?: string;
+    }): Promise<{ id: string; url: string }> {
+        const id = `asset${++this.created}`;
+        return { id, url: `${ASSET_HOST}${id}` };
+    }
+
+    private giveIds(blocks: Block[]): void {
+        for (const block of blocks) {
+            if (!block.id) block.id = `blk${++this.created}`;
+            if ("children" in block && block.children) this.giveIds(block.children);
+        }
     }
 
     /** As in the API, a resource under a template is a template too. */
