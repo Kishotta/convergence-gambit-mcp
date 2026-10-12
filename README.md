@@ -18,6 +18,7 @@ token. Write tools come next, designed from what the read tools teach us.
 | `ping`            | Proves the transport; says whether the live project or the fake answers. |
 | `get_charter`     | Serves the Architecture & Presentation Charter verbatim.                 |
 | `get_tree`        | The project hierarchy as an outline, hidden resources marked.            |
+| `list_templates`  | The article skeletons (templates), with their tabs and nested resources. |
 | `read_article`    | One article as markdown: visibility, properties, pages, maps, timelines.  |
 | `search`          | LegendKeeper full-text search with matching passages.                    |
 | `find_by_tag`     | Tag-index queries — DM Dashboard / Field Notes previews.                 |
@@ -162,7 +163,7 @@ src/index.ts      MCP tools — talk only to the interface and src/wiki/
 
 The SDK is a beta regenerated on every API release, so it is pinned to an
 exact version and confined to `src/lk/`. Upgrading it should mean editing
-`sdk.ts`/`types.ts`, never the tools. Fields the newer spec in `docs/` has
+`sdk.ts`/`types.ts`, never the tools. Fields the live API returns
 but the pinned SDK doesn't type yet are tagged `SPEC-DRIFT` in
 `src/lk/types.ts`.
 

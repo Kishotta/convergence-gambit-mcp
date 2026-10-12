@@ -9,6 +9,7 @@
  *   - ping            proves the transport; reports which LK backend answers
  *   - get_charter     serves the architecture charter verbatim
  *   - get_tree        the project hierarchy as an outline
+ *   - list_templates  the article skeletons new resources can be copied from
  *   - read_article    one article, every tab, rendered to markdown
  *   - search          LegendKeeper full-text search
  *   - find_by_tag     tag-index queries (DM Dashboard / Field Notes previews)
@@ -40,7 +41,7 @@ import type { Env } from "./env";
 import { createLegendKeeperClient } from "./lk/client";
 import type { LegendKeeperClient } from "./lk/types";
 import { ResourceIndex } from "./wiki/index";
-import { articleView, searchView, taggedView, tagsView, treeView } from "./wiki/views";
+import { articleView, searchView, taggedView, tagsView, templatesView, treeView } from "./wiki/views";
 
 /**
  * How long a ResourceIndex snapshot is reused. Long enough that a burst of
@@ -97,7 +98,8 @@ export class ConvergenceGambitMCP extends McpAgent<Env, Record<string, never>, P
         this.server.tool(
             "get_tree",
             "The wiki's hierarchy as an indented outline: name, id, tags, and 🔒 on hidden resources. " +
-                "Start here to orient, or pass rootId to see one branch (e.g. everything under Sigil).",
+                "Start here to orient, or pass rootId to see one branch (e.g. everything under Sigil). " +
+                "Templates are listed apart from the wiki, after it.",
             {
                 rootId: z.string().optional().describe("Only this resource and its descendants."),
                 maxDepth: z
@@ -110,6 +112,15 @@ export class ConvergenceGambitMCP extends McpAgent<Env, Record<string, never>, P
             },
             async ({ rootId, maxDepth, audience }) =>
                 guard(async () => text(treeView(await this.index(), { rootId, maxDepth, audience }))),
+        );
+
+        this.server.tool(
+            "list_templates",
+            "The project's templates (reusable article skeletons such as Character or Session) as an " +
+                "outline: name, id, tags, tabs, and any nested resources that are copied with them. " +
+                "Templates are not wiki articles; pass an id to read_article to see a skeleton's content.",
+            {},
+            async () => guard(async () => text(templatesView(await this.index()))),
         );
 
         this.server.tool(
@@ -147,7 +158,7 @@ export class ConvergenceGambitMCP extends McpAgent<Env, Record<string, never>, P
             "find_by_tag",
             "Lists resources by tag, the way the charter's tag indexes do (DM Dashboard queries like " +
                 "'npc' + 'act-1'; Field Notes indexes like 'met'). With audience \"player\", shows exactly " +
-                "what a Field Notes index would show players right now.",
+                "what a Field Notes index would show players right now. Templates never match.",
             {
                 tags: z.array(z.string().min(1)).min(1),
                 match: z.enum(["any", "all"]).default("all"),
@@ -159,7 +170,7 @@ export class ConvergenceGambitMCP extends McpAgent<Env, Record<string, never>, P
 
         this.server.tool(
             "list_tags",
-            "Every tag in the project with how many resources carry it and how many of those players " +
+            "Every tag in the wiki with how many resources carry it and how many of those players " +
                 "can see. Use to pick existing tag vocabulary and to audit charter §6 tagging discipline " +
                 "(DM-only grouping tags should have 0 player-visible carriers).",
             {},
