@@ -5,7 +5,7 @@
  * can't see (charter §2–3).
  */
 
-import type { LegendKeeperClient, LKDocument, Resource } from "../lk/types";
+import { TEMPLATES_ROOT_ID, type LegendKeeperClient, type LKDocument, type Resource } from "../lk/types";
 import type { Audience, ResourceIndex, Visibility } from "./index";
 import { concealed, renderBlocks, renderProperty, type RenderContext } from "./render";
 import { renderMap, renderTimeline } from "./spatial";
@@ -23,6 +23,8 @@ export async function articleView(
     const { audience, documentId } = options;
     const resource = await lk.getResource(resourceId);
     const visibility = effectiveVisibility(resource, index);
+    // As with visibility, the index may predate a template created since it was loaded.
+    const isTemplate = index.isTemplate(resource.id) || resource.parentId === TEMPLATES_ROOT_ID;
 
     const header = [
         `# ${resource.name}`,
@@ -30,6 +32,7 @@ export async function articleView(
         ...[
             `- **id:** ${resource.id}`,
             `- **path:** ${index.pathLabel(resource.id)}`,
+            isTemplate ? "- **template:** yes, a skeleton for new articles, not a wiki article" : "",
             `- **players:** ${visibilityLabel(resource.id, visibility)}`,
             resource.tags.length ? `- **tags:** ${resource.tags.join(", ")}` : "",
             resource.aliases.length ? `- **aliases:** ${resource.aliases.join(", ")}` : "",
@@ -176,13 +179,49 @@ export function treeView(
         visit(rootId, 1);
     } else {
         visit(null, 0);
+        // Templates are skeletons, not part of the wiki players browse.
+        if (audience === "dm" && index.templateCount) {
+            lines.push("", "Templates (skeletons, not wiki articles; see list_templates):", "");
+            visit(TEMPLATES_ROOT_ID, 0);
+        }
     }
 
+    const templates = index.templateCount;
     return [
-        `${index.size} resources (snapshot ${index.loadedAt.toISOString()}). ` +
+        `${index.size - templates} resources` +
+            (templates ? ` and ${templates} template${templates === 1 ? "" : "s"}` : "") +
+            ` (snapshot ${index.loadedAt.toISOString()}). ` +
             (audience === "dm"
                 ? "🔒 marks a resource hidden from players; its whole subtree is hidden with it."
                 : "Player view: hidden subtrees omitted."),
+        "",
+        ...lines,
+    ].join("\n");
+}
+
+// ---------------------------------------------------------------------------
+// list_templates
+// ---------------------------------------------------------------------------
+
+export function templatesView(index: ResourceIndex): string {
+    const top = index.children(TEMPLATES_ROOT_ID);
+    if (!top.length) return "No templates in the project.";
+
+    const lines: string[] = [];
+    const visit = (id: string, depth: number) => {
+        for (const child of index.children(id)) {
+            const tabs = child.documents.map((doc) => `${doc.name} (${doc.type})`).join(", ");
+            lines.push(`${"  ".repeat(depth)}- ${resourceLine(child, true)} · tabs: ${tabs || "none"}`);
+            visit(child.id, depth + 1);
+        }
+    };
+    visit(TEMPLATES_ROOT_ID, 0);
+
+    return [
+        `${top.length} template${top.length === 1 ? "" : "s"}, ${index.templateCount} resources with their ` +
+            `nested ones (snapshot ${index.loadedAt.toISOString()}). A template is a skeleton for new ` +
+            "articles, not a wiki article: search and the tag tools leave it out. Nested resources are " +
+            "templates too, and can be copied along with their parent. Read a skeleton with read_article.",
         "",
         ...lines,
     ].join("\n");
@@ -214,7 +253,8 @@ export function tagsView(index: ResourceIndex): string {
     if (!usage.length) return "No tags in the project.";
     return [
         "Tags by use. `players` counts the carriers players can see: per charter §6, any tag on a " +
-            "player-visible resource must be player-safe, so DM-only grouping tags should read 0.",
+            "player-visible resource must be player-safe, so DM-only grouping tags should read 0. " +
+            "Tags on templates are not counted.",
         "",
         "| tag | resources | players |",
         "| --- | --- | --- |",

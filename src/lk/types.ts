@@ -2,7 +2,7 @@
  * LegendKeeper domain types — The Convergence Gambit MCP server.
  *
  * The shapes come from the official v3 API (`@legendkeeper/sdk`, generated
- * from the OpenAPI spec; a copy lives at docs/LegendKeeper API.json). They
+ * from the OpenAPI spec, which ships in the package as openapi.json). They
  * are re-exported from here, type-only, so everything above the seam
  * imports LK types from this one file. When a beta release reshapes a
  * schema, the compiler points at the call sites and this file is where
@@ -45,6 +45,13 @@ export type TimelineEvent = Schemas["Event"];
  */
 export type Mention = Extract<Run, { mention: unknown }>["mention"];
 
+/**
+ * The virtual root of templates. A top-level template has this as its
+ * `parentId`; a resource under a template is a template too. It is a
+ * reserved id, not a resource: `getResource` never returns it.
+ */
+export const TEMPLATES_ROOT_ID = "templates";
+
 // ---------------------------------------------------------------------------
 // The client seam
 // ---------------------------------------------------------------------------
@@ -63,7 +70,10 @@ export interface LegendKeeperClient {
     /** Which backend this is, so `ping` can say whether the data is real. */
     readonly backend: "legendkeeper" | "fake";
 
-    /** Every resource in the project (all pages), or only direct children of `parentId`. */
+    /**
+     * Every resource in the project (all pages), templates included, or only
+     * direct children of `parentId` (`TEMPLATES_ROOT_ID` for the top-level templates).
+     */
     listResources(options?: { parentId?: string }): Promise<ResourceListItem[]>;
     /** A resource with its documents (tabs) and sidebar properties. Throws on a miss. */
     getResource(resourceId: string): Promise<Resource>;

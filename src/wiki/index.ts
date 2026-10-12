@@ -9,10 +9,14 @@
  * parent chain, so one listResources walk (paged at 100) builds this index
  * and every view shares it.
  *
+ * The same walk returns templates (resources under the virtual `templates`
+ * root). They are skeletons, not wiki articles, so the index keeps them in
+ * a tree of their own: out of the root listing, tag queries and tag counts.
+ *
  * Built only from the LegendKeeperClient seam; knows nothing of the SDK.
  */
 
-import type { LegendKeeperClient, ResourceListItem } from "../lk/types";
+import { TEMPLATES_ROOT_ID, type LegendKeeperClient, type ResourceListItem } from "../lk/types";
 
 /** Who a view is rendered for: the DM sees everything, players only revealed content. */
 export type Audience = "dm" | "player";
@@ -60,7 +64,23 @@ export class ResourceIndex {
         return this.byId.get(id);
     }
 
-    /** Direct children ordered as in the app; `null` for root resources. */
+    /** Templates at any depth. */
+    get templateCount(): number {
+        return this.inTreeOrder(TEMPLATES_ROOT_ID).length;
+    }
+
+    /** Whether the resource is a template: its parent chain ends at the templates root. */
+    isTemplate(id: string): boolean {
+        const self = this.byId.get(id);
+        if (!self) return false;
+        const top = this.ancestors(id)[0] ?? self;
+        return top.parentId === TEMPLATES_ROOT_ID;
+    }
+
+    /**
+     * Direct children ordered as in the app; `null` for root resources,
+     * `TEMPLATES_ROOT_ID` for the top-level templates.
+     */
     children(id: string | null): ResourceListItem[] {
         return this.childrenOf.get(id) ?? [];
     }
@@ -80,9 +100,10 @@ export class ResourceIndex {
         return chain;
     }
 
-    /** "Sigil / Lower Ward", or "(root)" for a root resource. */
+    /** "Sigil / Lower Ward", or "(root)" for a root resource. Templates sit under "Templates". */
     pathLabel(id: string): string {
         const names = this.ancestors(id).map((a) => a.name);
+        if (this.isTemplate(id)) names.unshift("Templates");
         return names.length ? names.join(" / ") : "(root)";
     }
 
@@ -102,7 +123,7 @@ export class ResourceIndex {
         return this.visibility(id).visible;
     }
 
-    /** Resources carrying any (or all) of `tags`, case-insensitively, in tree order. */
+    /** Resources carrying any (or all) of `tags`, case-insensitively, in tree order. Templates never match. */
     withTags(tags: string[], match: "any" | "all"): ResourceListItem[] {
         const wanted = tags.map((t) => t.toLowerCase());
         return this.inTreeOrder().filter((r) => {
@@ -113,9 +134,10 @@ export class ResourceIndex {
         });
     }
 
+    /** Tag counts over the wiki's articles; a template's tags are not usage. */
     tagUsage(): TagUsage[] {
         const usage = new Map<string, TagUsage>();
-        for (const r of this.byId.values()) {
+        for (const r of this.inTreeOrder()) {
             const visible = this.isPlayerVisible(r.id);
             for (const tag of r.tags) {
                 const entry = usage.get(tag) ?? { tag, count: 0, playerVisible: 0 };
@@ -129,7 +151,7 @@ export class ResourceIndex {
         );
     }
 
-    /** Depth-first, siblings by rank — the order of the app's sidebar. */
+    /** Depth-first, siblings by rank — the order of the app's sidebar. Templates only under `TEMPLATES_ROOT_ID`. */
     inTreeOrder(rootId: string | null = null): ResourceListItem[] {
         const out: ResourceListItem[] = [];
         const visit = (id: string | null) => {
@@ -142,8 +164,12 @@ export class ResourceIndex {
         return out;
     }
 
-    /** A resource whose parent isn't in the index (deleted, or unreachable) is treated as a root. */
+    /**
+     * A resource whose parent isn't in the index (deleted, or unreachable) is
+     * treated as a root. The templates root is never in the index, by design.
+     */
     private parentKey(r: ResourceListItem): string | null {
+        if (r.parentId === TEMPLATES_ROOT_ID) return TEMPLATES_ROOT_ID;
         return r.parentId && this.byId.has(r.parentId) ? r.parentId : null;
     }
 }

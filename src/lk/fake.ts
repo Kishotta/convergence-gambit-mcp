@@ -8,9 +8,12 @@
  * a hidden sidebar property, and visible text that mentions a hidden
  * element (the charter's "one accepted leak"). Sigil's map and the campaign
  * timeline cover the same ground for pins and events: hidden ones, visible
- * ones linking to hidden articles, and a hidden map folder.
+ * ones linking to hidden articles, and a hidden map folder. Two templates
+ * (one with a nested resource, both carrying tags real articles use) check
+ * that skeletons stay out of the wiki's tree and tag counts.
  */
 
+import { TEMPLATES_ROOT_ID } from "./types";
 import type {
     Block,
     DocumentBlocks,
@@ -252,6 +255,30 @@ const SEED: SeedResource[] = [
             },
         ],
     },
+    {
+        id: "tplchar1",
+        name: "Character",
+        parentId: TEMPLATES_ROOT_ID,
+        tags: ["npc"],
+        tabs: [
+            { name: "Overview", blocks: [h(2, "Appearance"), h(2, "Wants")] },
+            { name: "DM Notes", isHidden: true, blocks: [h(2, "Secrets")] },
+        ],
+    },
+    {
+        id: "tplshop1",
+        name: "Shop",
+        parentId: TEMPLATES_ROOT_ID,
+        tags: ["shop"],
+        tabs: [{ name: "Overview", blocks: [h(2, "Wares")] }],
+    },
+    {
+        id: "tplshop2",
+        name: "Proprietor",
+        parentId: "tplshop1",
+        tags: ["npc"],
+        tabs: [{ name: "Overview", blocks: [h(2, "Wants")] }],
+    },
 ];
 
 export class FakeLegendKeeperClient implements LegendKeeperClient {
@@ -364,10 +391,19 @@ export class FakeLegendKeeperClient implements LegendKeeperClient {
         return timeline;
     }
 
+    /** As in the API, a resource under a template is a template too. */
+    private isTemplate(resource: Resource): boolean {
+        let parentId = resource.parentId;
+        while (parentId && parentId !== TEMPLATES_ROOT_ID) parentId = this.rows.get(parentId)?.resource.parentId;
+        return parentId === TEMPLATES_ROOT_ID;
+    }
+
+    /** As in the API, search never returns templates. */
     async search(query: string, limit = 32): Promise<SearchResult[]> {
         const needle = query.toLowerCase();
         if (!needle) return [];
         return [...this.rows.values()]
+            .filter(({ resource }) => !this.isTemplate(resource))
             .filter(({ resource }) =>
                 [resource.name, ...resource.aliases].some((name) =>
                     name.toLowerCase().includes(needle),
