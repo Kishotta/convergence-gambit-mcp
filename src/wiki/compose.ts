@@ -3,8 +3,8 @@
  * prose Claude hands to the write tools.
  *
  * Deliberately small. It understands what an article's running text needs:
- * paragraphs (separated by a blank line), `- ` bullet lists, `**bold**`,
- * `*italic*`, `[label](https://…)` links, and mentions written the way
+ * paragraphs (separated by a blank line), `- ` bullet lists, `> ` quote
+ * blocks (which hold the same things), `**bold**`, `*italic*`, `[label](https://…)` links, and mentions written the way
  * render.ts prints them, `[Name](lk:resourceId)`. Anything else stays
  * literal text rather than being guessed at.
  */
@@ -17,8 +17,11 @@ export function composeBlocks(markdown: string): Block[] {
     const blocks: Block[] = [];
     let paragraph: string[] = [];
     let items: string[] = [];
+    let quoted: string[] = [];
 
     const flush = () => {
+        if (quoted.length) blocks.push({ kind: "quote", children: composeBlocks(quoted.join("\n")) });
+        quoted = [];
         if (paragraph.length) blocks.push({ kind: "paragraph", content: composeRuns(paragraph.join(" ")) });
         if (items.length) {
             blocks.push({
@@ -36,12 +39,17 @@ export function composeBlocks(markdown: string): Block[] {
     for (const raw of markdown.split(/\r?\n/)) {
         const line = raw.trim();
         const bullet = line.match(/^[-*]\s+(.*)$/);
+        const quote = line.match(/^>\s?(.*)$/);
         if (!line) flush();
-        else if (bullet) {
-            if (paragraph.length) flush();
+        else if (quote) {
+            // A bare ">" keeps the quote open across its own paragraph break.
+            if (paragraph.length || items.length) flush();
+            quoted.push(quote[1]);
+        } else if (bullet) {
+            if (paragraph.length || quoted.length) flush();
             items.push(bullet[1]);
         } else {
-            if (items.length) flush();
+            if (items.length || quoted.length) flush();
             paragraph.push(line);
         }
     }

@@ -200,7 +200,7 @@ export class ConvergenceGambitMCP extends McpAgent<Env, Record<string, never>, P
                 "read_article would. Campaign rule: a Common item shows its mechanics; from Uncommon up " +
                 "they go in a secret block until the party identifies the item. So keep `description` to " +
                 "what a character perceives, and put rules text in `mechanics`. Text fields are markdown: " +
-                "paragraphs, `- ` lists, **bold**, *italic*, and mentions as [Name](lk:resourceId). " +
+                "paragraphs, `- ` lists, `> ` quote blocks, **bold**, *italic*, and mentions as [Name](lk:resourceId). " +
                 "An optional `imageUrl` is downloaded into the project's asset library and shown beside " +
                 "the description. Refuses a name an existing magic item already has. Where the item is found is not an " +
                 "input: the article's Backlinks fill in when another article mentions it.",
