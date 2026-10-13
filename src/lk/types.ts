@@ -45,6 +45,12 @@ export type TimelineEvent = Schemas["Event"];
  */
 export type Mention = Extract<Run, { mention: unknown }>["mention"];
 
+/**
+ * Where an inserted block goes: after or before a sibling, or as the last
+ * child of a container. At most one; none appends at the end of the page.
+ */
+export type BlockPlacement = { after?: string; before?: string; parent?: string };
+
 /** The image formats the asset library stores. */
 export const IMAGE_CONTENT_TYPES = ["image/jpeg", "image/png", "image/gif", "image/webp"] as const;
 export type ImageContentType = (typeof IMAGE_CONTENT_TYPES)[number];
@@ -130,4 +136,29 @@ export interface LegendKeeperClient {
         blocks: Block[],
         ifMatch?: string,
     ): Promise<DocumentBlocks>;
+
+    /**
+     * The block-level writes touch only the block named, so the rest of the
+     * page is never read back and rewritten. Each takes the same `ifMatch`
+     * as `replaceDocumentBlocks`; the ones that answer with content return
+     * the page's new version.
+     */
+    /** Inserts a block with its subtree and returns the id it was given. */
+    insertBlock(
+        resourceId: string,
+        documentId: string,
+        block: Block,
+        at: BlockPlacement,
+        ifMatch?: string,
+    ): Promise<{ id: string; version: string }>;
+    /** Replaces a block and its subtree; the block keeps its id. */
+    replaceBlock(
+        resourceId: string,
+        documentId: string,
+        blockId: string,
+        block: Block,
+        ifMatch?: string,
+    ): Promise<{ version: string }>;
+    /** Removes a block and its subtree. The new version comes only from a fresh read. */
+    deleteBlock(resourceId: string, documentId: string, blockId: string, ifMatch?: string): Promise<void>;
 }

@@ -16,8 +16,10 @@
  *   - list_tags       tag usage, with a player-safety count per tag
  *   - get_page_blocks raw block JSON, for debugging and write-tool planning
  *
- * Write-side toolset, one charter-aware tool per kind of article:
+ * Write-side toolset, one charter-aware tool per kind of article, plus a
+ * catch-all for the articles that already exist:
  *   - create_magic_item  a new, hidden item from the Magic Item templates
+ *   - edit_page          insert, replace and delete blocks of a page tab
  *
  * The views take an audience: "dm" (everything, concealed layers marked)
  * or "player" (only what's revealed). See src/wiki/.
@@ -44,6 +46,7 @@ import type { Env } from "./env";
 import { createLegendKeeperClient } from "./lk/client";
 import type { LegendKeeperClient } from "./lk/types";
 import { ResourceIndex } from "./wiki/index";
+import { editPage } from "./wiki/edit";
 import { createMagicItem, ITEM_KINDS, RARITIES, type ItemKind } from "./wiki/items";
 import { articleView, searchView, taggedView, tagsView, templatesView, treeView } from "./wiki/views";
 
@@ -139,10 +142,20 @@ export class ConvergenceGambitMCP extends McpAgent<Env, Record<string, never>, P
                 resourceId: z.string().describe("The resource id, from get_tree, search or a mention."),
                 documentId: z.string().optional().describe("Only this tab. Default: every tab."),
                 audience,
+                blockIds: z
+                    .boolean()
+                    .default(false)
+                    .describe(
+                        "Before edit_page: print each page block's id on a ⟦id⟧ line above it, and each page " +
+                            "tab's document version. A page written before block ids existed is given them " +
+                            "(no content changes).",
+                    ),
             },
-            async ({ resourceId, documentId, audience }) =>
+            async ({ resourceId, documentId, audience, blockIds }) =>
                 guard(async () =>
-                    text(await articleView(this.lk, await this.index(), resourceId, { audience, documentId })),
+                    text(
+                        await articleView(this.lk, await this.index(), resourceId, { audience, documentId, blockIds }),
+                    ),
                 ),
         );
 
@@ -237,6 +250,81 @@ export class ConvergenceGambitMCP extends McpAgent<Env, Record<string, never>, P
                     this.indexCache = undefined;
                     const article = await articleView(this.lk, await this.index(), id, { audience: "dm" });
                     return text(`Created. It is hidden from players until you reveal it.\n\n${article}`);
+                }),
+        );
+
+        const blockId = z.string().min(1).max(256);
+        const markdown = z.string().min(1).describe("Markdown, written as read_article prints page text.");
+        this.server.tool(
+            "edit_page",
+            "WRITES to the wiki: inserts, replaces and deletes blocks in one page tab of an existing " +
+                "article, to bring it in line with newer notes. First call read_article with blockIds for " +
+                "that tab: it gives the document version and a ⟦id⟧ line above each block. Operations apply " +
+                "in order and stop at the first failure; mistakes in the request are caught before anything " +
+                "is written. Returns what each operation did, the old text of anything replaced or deleted, " +
+                "and the tab as it now stands with its new version and ids. " +
+                "Markdown: paragraphs, headings (### is the page's top level, #### the next), `- ` and `1. ` " +
+                "lists, `> ` quotes (a first line of **Note:**, **Info:**, **Warning:**, **Success:** or " +
+                "**Error:** makes a callout), `---`, **bold**, *italic*, ~~strike~~, `code`, links, and " +
+                "mentions as [Name](lk:resourceId). One markdown may hold several blocks. A list or table " +
+                "has one id: change an item by replacing the whole list. Tables, images and infoboxes can " +
+                "be deleted or left alone, not written. " +
+                "SECRECY is never read from the text. An insert is secret when placed in or beside the " +
+                "contents of a secret block (give the secret block's id as `parent`), or when `secret` is " +
+                "true, which wraps it in a new secret block; otherwise players can read it. A replace " +
+                "keeps what the block was: replacing a secret block rewrites its contents and it stays " +
+                "secret. Never paste a rendered secret block or ⟦id⟧ lines back as markdown.",
+            {
+                resourceId: z.string().describe("The article."),
+                documentId: z.string().describe("The page tab, from the article's tab headings."),
+                version: z.string().describe("The tab's document version from read_article with blockIds."),
+                operations: z
+                    .array(
+                        z.discriminatedUnion("op", [
+                            z.object({
+                                op: z.literal("insert"),
+                                markdown,
+                                after: blockId.optional().describe("Insert after this block."),
+                                before: blockId.optional().describe("Insert before this block."),
+                                parent: blockId
+                                    .optional()
+                                    .describe(
+                                        "Append as the last child of this container (a secret block, quote, callout, " +
+                                            "collapsible or layout column). With none of the three: the end of the page.",
+                                    ),
+                                secret: z.boolean().optional().describe("true: wrap in a new secret block."),
+                            }),
+                            z.object({
+                                op: z.literal("replace"),
+                                blockId,
+                                markdown,
+                                secret: z
+                                    .boolean()
+                                    .optional()
+                                    .describe(
+                                        "Omit to keep the block's secrecy. true: a visible block becomes a secret " +
+                                            "block. false: a secret block becomes player-facing text (a reveal).",
+                                    ),
+                            }),
+                            z.object({
+                                op: z.literal("delete"),
+                                blockId: blockId.describe("Removed with everything inside it."),
+                            }),
+                        ]),
+                    )
+                    .min(1)
+                    .max(50),
+            },
+            async ({ resourceId, documentId, version, operations }) =>
+                guard(async () => {
+                    const index = await this.index();
+                    const report = await editPage(this.lk, index, { resourceId, documentId, version, operations });
+                    const article = await articleView(this.lk, index, resourceId, {
+                        audience: "dm",
+                        documentId,
+                        blockIds: true,
+                    });
+                    return text(`${report}\n\n---\n\n${article}`);
                 }),
         );
     }

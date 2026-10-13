@@ -11,6 +11,7 @@ import { LegendKeeper, LegendKeeperError } from "@legendkeeper/sdk";
 
 import type {
     Block,
+    BlockPlacement,
     DocumentBlocks,
     ImageContentType,
     LegendKeeperClient,
@@ -179,6 +180,45 @@ export class SdkLegendKeeperClient implements LegendKeeperClient {
                 { projectId: this.projectId, resourceId, documentId },
                 { blocks, ifMatch },
             ),
+        );
+    }
+
+    async insertBlock(
+        resourceId: string,
+        documentId: string,
+        block: Block,
+        at: BlockPlacement,
+        ifMatch?: string,
+    ): Promise<{ id: string; version: string }> {
+        return this.call(async () => {
+            const inserted = await this.lk.blocks.insert(
+                { projectId: this.projectId, resourceId, documentId },
+                { block, ...at, ifMatch },
+            );
+            if (!inserted.id) throw new Error("The inserted block came back without an id");
+            return { id: inserted.id, version: inserted.version };
+        });
+    }
+
+    async replaceBlock(
+        resourceId: string,
+        documentId: string,
+        blockId: string,
+        block: Block,
+        ifMatch?: string,
+    ): Promise<{ version: string }> {
+        return this.call(async () => {
+            const replaced = await this.lk.blocks.replace(
+                { projectId: this.projectId, resourceId, documentId, blockId },
+                { ...block, ifMatch },
+            );
+            return { version: replaced.version };
+        });
+    }
+
+    async deleteBlock(resourceId: string, documentId: string, blockId: string, ifMatch?: string): Promise<void> {
+        await this.call(() =>
+            this.lk.blocks.delete({ projectId: this.projectId, resourceId, documentId, blockId }, { ifMatch }),
         );
     }
 

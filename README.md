@@ -36,11 +36,22 @@ accepted leak".
 | Tool                | Purpose                                                                 |
 | ------------------- | ----------------------------------------------------------------------- |
 | `create_magic_item` | A new, hidden item article from the Magic Item templates, populated.    |
+| `edit_page`         | Insert, replace and delete blocks in one page tab of an existing article. |
 
-Write tools are specific on purpose: each knows one kind of article, its
-template, its tags and where its content goes. `create_magic_item` puts
+The create tools are specific on purpose: each knows one kind of article,
+its template, its tags and where its content goes. `create_magic_item` puts
 mechanics in a secret block for anything above Common, since the party has
 to identify those first.
+
+`edit_page` is the catch-all for articles that already exist, for bringing
+a stale or half-filled one in line with newer notes. Read the tab first
+with `read_article` and `blockIds`: that prints a `⟦id⟧` line above each
+block and the tab's document version, which the edit must quote so it
+fails rather than overwrite a change made since. Secrecy is never read
+from the text: content is secret when it is put inside a secret block or
+sent with `secret: true`, and the result says which layer each piece
+landed in. A batch is not atomic; it is checked as a whole before the
+first write, then applies in order and stops at the first failure.
 
 ## Setup (day one)
 
@@ -210,9 +221,10 @@ To exercise the cron locally, with `npm run dev` already running:
 4. **Real client, read side** _(done)_ — `src/lk/sdk.ts` over the official
    SDK, plus the read tools above. Needs `npx wrangler secret put LK_API_KEY`
    (an ADMIN-role project key; `LK_PROJECT_ID` optional).
-5. **Charter-aware write tools** _(started)_ — `create_magic_item` and a
-   small markdown→blocks converter (`src/wiki/compose.ts`) exist. Still to
-   come: `create_npc_article`, `create_location_article`, `stage_reveal`.
+5. **Charter-aware write tools** _(started)_ — `create_magic_item`, the
+   block-level `edit_page` and a small markdown→blocks converter
+   (`src/wiki/compose.ts`) exist. `edit_page` does not yet move blocks or
+   write tables, images or infobox rows. Still to come: `create_npc_article`, `create_location_article`, `stage_reveal`.
    Designed from real usage of the tools so far.
 
 ## What the real API answered

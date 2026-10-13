@@ -15,6 +15,11 @@
  * `read_article`. A mention of a player-hidden resource from player-visible
  * text is the charter's "one accepted leak" (a dead link that confirms the
  * name exists); those are collected in `ctx.leaks` for the reveal-layer check.
+ *
+ * With `ctx.blockIds`, each block that edit_page can address carries its id
+ * on a line of its own, as `⟦id⟧`. Lists and tables are marked as a whole:
+ * the composer writes a list from markdown, so an edit replaces the list
+ * rather than one item of it.
  */
 
 import type { Block, Mention, PropertyBlock, Run } from "../lk/types";
@@ -27,15 +32,29 @@ export interface RenderContext {
     concealed: boolean;
     /** Player-hidden resources named in player-visible text, keyed by id. */
     leaks: Map<string, string>;
+    /** Mark each addressable block with its id, for edit_page. */
+    blockIds?: boolean;
 }
 
 type BlockOf<K extends Block["kind"]> = Extract<Block, { kind: K }>;
 
-const HIDDEN = "⟨hidden from players⟩";
+/**
+ * The renderer's own annotations. They are not content: text that carries
+ * one must not be written back to a page (see src/wiki/edit.ts).
+ */
+export const HIDDEN = "⟨hidden from players⟩";
+export const SECRET_HEADING = "🔒 **SECRET BLOCK**";
+export const BLOCK_MARKER = /⟦[^⟧\n]*⟧/;
 
 export function renderBlocks(blocks: Block[] | undefined, ctx: RenderContext): string {
     return (blocks ?? [])
-        .map((block) => renderBlock(block, ctx))
+        .map((block) => {
+            const out = renderBlock(block, ctx);
+            if (!ctx.blockIds || !block.id) return out;
+            // An empty block is still addressable. A secret the audience can't see is not shown at all.
+            if (out.trim() === "") return block.kind === "secret" ? "" : `⟦${block.id}⟧\n(empty ${block.kind})`;
+            return `⟦${block.id}⟧\n${out}`;
+        })
         .filter((out) => out.trim() !== "")
         .join("\n\n");
 }
@@ -54,13 +73,13 @@ function renderBlock(block: Block, ctx: RenderContext): string {
         case "rule":
             return "---";
         case "bulletList":
-            return block.children.map((child) => listItem(child, "- ", ctx)).join("\n");
+            return unmarked(ctx, () => block.children.map((child) => listItem(child, "- ", ctx)).join("\n"));
         case "orderedList":
-            return block.children
-                .map((child, i) => listItem(child, `${(block.start ?? 1) + i}. `, ctx))
-                .join("\n");
+            return unmarked(ctx, () =>
+                block.children.map((child, i) => listItem(child, `${(block.start ?? 1) + i}. `, ctx)).join("\n"),
+            );
         case "taskList":
-            return block.children.map((child) => listItem(child, "", ctx)).join("\n");
+            return unmarked(ctx, () => block.children.map((child) => listItem(child, "", ctx)).join("\n"));
         case "taskItem":
             return `- [${block.checked ? "x" : " "}] ${runs(block.content, ctx)}`;
         case "listItem":
@@ -70,7 +89,7 @@ function renderBlock(block: Block, ctx: RenderContext): string {
         case "tableCell":
             return renderBlocks(block.children, ctx);
         case "table":
-            return table(block, ctx);
+            return unmarked(ctx, () => table(block, ctx));
         case "callout":
             return quote(
                 `**${block.tone === "custom" ? "Callout" : capitalize(block.tone)}:**\n\n` +
@@ -82,7 +101,7 @@ function renderBlock(block: Block, ctx: RenderContext): string {
             if (ctx.audience === "player") return "";
             return concealed(ctx, () =>
                 quote(
-                    "🔒 **SECRET BLOCK** — players see nothing here until it is revealed\n\n" +
+                    `${SECRET_HEADING} — players see nothing here until it is revealed\n\n` +
                         renderBlocks(block.children, ctx),
                 ),
             );
@@ -131,7 +150,8 @@ export function renderProperty(prop: PropertyBlock, ctx: RenderContext): string 
             `**${prop.title ?? capitalize(prop.kind)}**` + (prop.isHidden ? ` 🔒 hidden property` : "");
         return `${title}\n${propertyBody(prop, ctx)}`;
     };
-    return prop.isHidden ? concealed(ctx, render) : render();
+    // A property's content is addressed through the property, not as blocks of the page.
+    return unmarked(ctx, () => (prop.isHidden ? concealed(ctx, render) : render()));
 }
 
 function propertyBody(prop: PropertyBlock, ctx: RenderContext): string {
@@ -275,6 +295,17 @@ export function concealed<T>(ctx: RenderContext, render: () => T): T {
         return render();
     } finally {
         ctx.concealed = previous;
+    }
+}
+
+/** Renders without block ids, for content edit_page doesn't address block by block. */
+function unmarked<T>(ctx: RenderContext, render: () => T): T {
+    const previous = ctx.blockIds;
+    ctx.blockIds = false;
+    try {
+        return render();
+    } finally {
+        ctx.blockIds = previous;
     }
 }
 
