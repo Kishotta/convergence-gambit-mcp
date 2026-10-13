@@ -5,7 +5,13 @@
  * can't see (charter §2–3).
  */
 
-import { TEMPLATES_ROOT_ID, type LegendKeeperClient, type LKDocument, type Resource } from "../lk/types";
+import {
+    TEMPLATES_ROOT_ID,
+    type Block,
+    type LegendKeeperClient,
+    type LKDocument,
+    type Resource,
+} from "../lk/types";
 import type { Audience, ResourceIndex, Visibility } from "./index";
 import { concealed, renderBlocks, renderProperty, type RenderContext } from "./render";
 import { renderMap, renderTimeline } from "./spatial";
@@ -18,9 +24,9 @@ export async function articleView(
     lk: LegendKeeperClient,
     index: ResourceIndex,
     resourceId: string,
-    options: { audience: Audience; documentId?: string },
+    options: { audience: Audience; documentId?: string; blockIds?: boolean },
 ): Promise<string> {
-    const { audience, documentId } = options;
+    const { audience, documentId, blockIds } = options;
     const resource = await lk.getResource(resourceId);
     const visibility = effectiveVisibility(resource, index);
     // As with visibility, the index may predate a template created since it was loaded.
@@ -49,6 +55,7 @@ export async function articleView(
         index,
         concealed: !visibility.visible,
         leaks: new Map(),
+        blockIds,
     };
     const sections: string[] = [header.join("\n")];
 
@@ -108,8 +115,15 @@ async function tabBody(
     switch (doc.type) {
         case "page":
         case "blank": {
-            const content = await lk.getDocumentBlocks(resourceId, doc.id);
-            return inTab(doc, ctx, () => renderBlocks(content.blocks, ctx) || "(empty)");
+            let content = await lk.getDocumentBlocks(resourceId, doc.id);
+            if (!ctx.blockIds) return inTab(doc, ctx, () => renderBlocks(content.blocks, ctx) || "(empty)");
+            // A page written before block ids existed has none to show. Assigning them changes no content.
+            if (lacksIds(content.blocks)) {
+                await lk.assignBlockIds(resourceId, doc.id);
+                content = await lk.getDocumentBlocks(resourceId, doc.id);
+            }
+            const body = inTab(doc, ctx, () => renderBlocks(content.blocks, ctx) || "(empty)");
+            return `Document version \`${content.version}\`, for edit_page. Each ⟦…⟧ line is the id of the block under it, not content.\n\n${body}`;
         }
         case "map": {
             const features = await lk.listMapFeatures(resourceId, doc.id);
@@ -125,6 +139,12 @@ async function tabBody(
         default:
             return `(${doc.type} content isn't rendered by this server yet.)`;
     }
+}
+
+function lacksIds(blocks: Block[]): boolean {
+    return blocks.some(
+        (block) => !block.id || ("children" in block && !!block.children && lacksIds(block.children as Block[])),
+    );
 }
 
 /** Renders a tab's content, concealed when the tab itself is hidden. */

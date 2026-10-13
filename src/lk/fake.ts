@@ -20,6 +20,7 @@
 import { TEMPLATES_ROOT_ID } from "./types";
 import type {
     Block,
+    BlockPlacement,
     DocumentBlocks,
     ImageContentType,
     LegendKeeperClient,
@@ -480,10 +481,7 @@ export class FakeLegendKeeperClient implements LegendKeeperClient {
         blocks: Block[],
         ifMatch?: string,
     ): Promise<DocumentBlocks> {
-        const doc = await this.getDocumentBlocks(resourceId, documentId);
-        if (ifMatch !== undefined && ifMatch !== doc.version) {
-            throw new Error(`Document ${documentId} changed since version ${ifMatch}`);
-        }
+        const doc = await this.unchanged(resourceId, documentId, ifMatch);
         const held = new Set(doc.blocks.filter((b) => b.kind === "unsupported").map((b) => b.id));
         // As in the API, an image is an asset of the project or one the page already holds.
         const heldImages = new Set(doc.blocks.flatMap((b) => (b.kind === "image" ? [b.url] : [])));
@@ -499,6 +497,81 @@ export class FakeLegendKeeperClient implements LegendKeeperClient {
         this.giveIds(doc.blocks);
         doc.version = String(Number(doc.version) + 1);
         return doc;
+    }
+
+    async insertBlock(
+        resourceId: string,
+        documentId: string,
+        block: Block,
+        at: BlockPlacement,
+        ifMatch?: string,
+    ): Promise<{ id: string; version: string }> {
+        const doc = await this.unchanged(resourceId, documentId, ifMatch);
+        const copy = structuredClone(block);
+        this.giveIds([copy]);
+        const sibling = at.after ?? at.before;
+        if (sibling !== undefined) {
+            const { siblings, position } = this.locate(doc, sibling);
+            siblings.splice(at.after !== undefined ? position + 1 : position, 0, copy);
+        } else if (at.parent !== undefined) {
+            const { siblings, position } = this.locate(doc, at.parent);
+            const parent = siblings[position];
+            if (!("children" in parent) || !parent.children) {
+                throw new Error(`INVALID_CONTENT: block ${at.parent} holds no blocks`);
+            }
+            (parent.children as Block[]).push(copy);
+        } else {
+            doc.blocks.push(copy);
+        }
+        doc.version = String(Number(doc.version) + 1);
+        return { id: copy.id!, version: doc.version };
+    }
+
+    async replaceBlock(
+        resourceId: string,
+        documentId: string,
+        blockId: string,
+        block: Block,
+        ifMatch?: string,
+    ): Promise<{ version: string }> {
+        const doc = await this.unchanged(resourceId, documentId, ifMatch);
+        const { siblings, position } = this.locate(doc, blockId);
+        const copy = { ...structuredClone(block), id: blockId };
+        this.giveIds([copy]);
+        siblings[position] = copy;
+        doc.version = String(Number(doc.version) + 1);
+        return { version: doc.version };
+    }
+
+    async deleteBlock(resourceId: string, documentId: string, blockId: string, ifMatch?: string): Promise<void> {
+        const doc = await this.unchanged(resourceId, documentId, ifMatch);
+        const { siblings, position } = this.locate(doc, blockId);
+        siblings.splice(position, 1);
+        doc.version = String(Number(doc.version) + 1);
+    }
+
+    /** The document, or a throw if it changed since `ifMatch`. */
+    private async unchanged(resourceId: string, documentId: string, ifMatch?: string): Promise<DocumentBlocks> {
+        const doc = await this.getDocumentBlocks(resourceId, documentId);
+        if (ifMatch !== undefined && ifMatch !== doc.version) {
+            throw new Error(`Document ${documentId} changed since version ${ifMatch}`);
+        }
+        return doc;
+    }
+
+    /** A block's place in the tree: the array that holds it and its position there. */
+    private locate(doc: DocumentBlocks, blockId: string): { siblings: Block[]; position: number } {
+        const search = (siblings: Block[]): { siblings: Block[]; position: number } | undefined => {
+            for (const [position, block] of siblings.entries()) {
+                if (block.id === blockId) return { siblings, position };
+                const found = "children" in block && block.children ? search(block.children as Block[]) : undefined;
+                if (found) return found;
+            }
+            return undefined;
+        };
+        const found = search(doc.blocks);
+        if (!found) throw new Error(`BLOCK_NOT_FOUND: no block ${blockId} in document ${doc.id}`);
+        return found;
     }
 
     async uploadImage(params: {
