@@ -13,6 +13,9 @@
  * out of the wiki's tree and tag counts. The Magic Item templates mirror the
  * live ones for create_magic_item: an unreadable Tags block without an id,
  * an empty image slot, then a placeholder paragraph and a placeholder secret.
+ * The 5.5e branch and its Spell, Background and Species templates mirror the
+ * live ones for the player-option tools, down to the infobox, the layouts of
+ * titled text fields, the "Ability SCores" typo and the stray "Human" tag.
  *
  * The write methods change this in-memory copy only.
  */
@@ -98,6 +101,120 @@ const itemTemplate = (id: string, name: string, tags: string[], parentId: string
         },
     ],
 });
+
+/** A titled text field holding one paragraph, as the 5.5e templates lay out their stats. */
+const field = (title: string, text = ""): Block => ({
+    kind: "textField",
+    title,
+    isTitleHidden: false,
+    children: [p(...(text ? [t(text)] : []))],
+});
+const columns = (...cols: Block[][]): Block => ({
+    kind: "layout",
+    children: cols.map((children) => ({ kind: "layoutColumn", width: 100 / cols.length, children })),
+});
+const emptyImage = (): Block => ({ kind: "image", url: "", title: "Image", isTitleHidden: true });
+
+/** The 5.5e rules branch and its three templates, shaped like the live ones. */
+const PLAYER_OPTIONS: SeedResource[] = [
+    { id: "rules001", name: "5.5e", tabs: [] },
+    { id: "spells01", name: "Spells", parentId: "rules001", tabs: [] },
+    {
+        id: "spell001",
+        name: "Augury",
+        parentId: "spells01",
+        tags: ["Spell", "Verbal", "Somatic", "Material", "Divination", "Cleric", "Ritual"],
+        tabs: [{ name: "Main", blocks: [p(t("You receive an omen."))] }],
+    },
+    { id: "classes1", name: "Classes", parentId: "rules001", tabs: [] },
+    {
+        id: "class001",
+        name: "Cleric",
+        parentId: "classes1",
+        tags: ["Class", "Cleric", "WotC", "Spellcaster", "Full Caster"],
+        tabs: [{ name: "Main", blocks: [p(t("Clerics draw power from the gods."))] }],
+    },
+    { id: "feats001", name: "Feats", parentId: "rules001", tabs: [] },
+    {
+        id: "feat0001",
+        name: "Scion of the Outer Planes",
+        parentId: "feats001",
+        tabs: [{ name: "Main", blocks: [p(t("Your connection to an Outer Plane infuses you."))] }],
+    },
+    { id: "backgr01", name: "Backgrounds", parentId: "rules001", tabs: [] },
+    { id: "specie01", name: "Species", parentId: "rules001", tabs: [] },
+    {
+        id: "tplspell",
+        name: "Spell",
+        parentId: TEMPLATES_ROOT_ID,
+        tags: ["Spell", "Verbal", "Somatic", "Material"],
+        tabs: [
+            {
+                name: "Main",
+                blocks: [
+                    {
+                        kind: "infobox",
+                        layout: "wrapRight",
+                        width: 40,
+                        rows: ["Level", "Damage/Effect", "Casting Time", "Duration", "Range/Area", "Attack/Save"].map(
+                            (title, i) => ({ ...field(title), id: `sprow${i}`, rank: String.fromCharCode(83 + i) }),
+                        ) as PropertyBlock[],
+                    },
+                    unreadable(),
+                    p(t("Description")),
+                    field("At Higher Levels", "Description"),
+                    p(),
+                ],
+            },
+        ],
+    },
+    {
+        id: "tplbackg",
+        name: "Background",
+        parentId: TEMPLATES_ROOT_ID,
+        tags: ["Background", "WotC"],
+        tabs: [
+            {
+                name: "Main",
+                blocks: [
+                    emptyImage(),
+                    p(t("Description")),
+                    // The live template's typo, kept: fields are matched by title regardless of case.
+                    columns([field("Ability SCores"), field("Skill Proficiencies")], [field("Feat"), field("Tool Proficiency")]),
+                    {
+                        kind: "textField",
+                        title: "Equipment",
+                        isTitleHidden: false,
+                        children: [{ kind: "bulletList", children: [{ kind: "listItem", children: [p()] }] }],
+                    },
+                    p(),
+                ],
+            },
+        ],
+    },
+    {
+        id: "tplspecs",
+        name: "Species",
+        parentId: TEMPLATES_ROOT_ID,
+        tags: ["Species", "Human", "WotC", "Humanoid"],
+        tabs: [
+            {
+                name: "Main",
+                blocks: [
+                    p(t("Description")),
+                    emptyImage(),
+                    columns([field("Type", "Humanoid")], [field("Size", "Small or Medium")], [field("Speed", "30 feet")]),
+                    p(),
+                    h(2, "Trait"),
+                    p(t("Description")),
+                    p(),
+                    h(2, "Trait"),
+                    p(t("Description")),
+                ],
+            },
+        ],
+    },
+];
 
 const pin = (id: string, name: string, extra: Partial<MapFeature> = {}): MapFeature => ({
     id,
@@ -288,6 +405,7 @@ const SEED: SeedResource[] = [
         name: "Magic Items",
         tabs: [{ name: "Overview", blocks: [p(t("Items as they're crafted."))] }],
     },
+    ...PLAYER_OPTIONS,
     itemTemplate("tplitem0", "Magic Item", ["Magic Item"], TEMPLATES_ROOT_ID),
     itemTemplate("tplitem1", "Consumable", ["Magic Item", "Consumable"], "tplitem0"),
     itemTemplate("tplitem2", "Equipment", ["Magic Item", "Equipment"], "tplitem0"),
@@ -454,6 +572,62 @@ export class FakeLegendKeeperClient implements LegendKeeperClient {
             parentId: params.parentId,
             rank: `z${this.created}`,
             documents,
+        };
+        this.rows.set(id, { resource, blocks, features: new Map(), timelines: new Map() });
+        return resource;
+    }
+
+    async createResource(params: {
+        name: string;
+        parentId?: string;
+        tags?: string[];
+        isHidden?: boolean;
+        documents: { name: string; type: "page"; blocks: Block[] }[];
+    }): Promise<Resource> {
+        if (params.parentId) this.row(params.parentId);
+        // As in the API, the request is validated whole before anything exists.
+        for (const doc of params.documents) {
+            const walk = (blocks: Block[]): void => {
+                for (const block of blocks) {
+                    if (block.kind === "image" && !block.url.startsWith(ASSET_HOST)) {
+                        throw new Error(`VALIDATION_ERROR: ${block.url} is not an asset of this project`);
+                    }
+                    if ("children" in block && block.children) walk(block.children);
+                }
+            };
+            walk(structuredClone(doc.blocks));
+        }
+
+        const id = `new${++this.created}`;
+        const blocks = new Map<string, DocumentBlocks>();
+        const documents: LKDocument[] = params.documents.map((doc, docIndex) => {
+            const docId = `${id}d${docIndex}`;
+            const content = structuredClone(doc.blocks);
+            this.giveIds(content);
+            blocks.set(docId, { id: docId, version: "1", schema: 1, text: "", blocks: content });
+            return {
+                id: docId,
+                name: doc.name,
+                type: doc.type,
+                rank: `a${docIndex}`,
+                isHidden: false,
+                createdAt: STAMP,
+                updatedAt: STAMP,
+            };
+        });
+        const resource: Resource = {
+            id,
+            name: params.name,
+            parentId: params.parentId,
+            tags: params.tags ?? [],
+            aliases: [],
+            rank: `z${this.created}`,
+            isHidden: params.isHidden ?? false,
+            permissions: {},
+            documents,
+            properties: [],
+            createdAt: STAMP,
+            updatedAt: STAMP,
         };
         this.rows.set(id, { resource, blocks, features: new Map(), timelines: new Map() });
         return resource;

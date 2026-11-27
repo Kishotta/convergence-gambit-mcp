@@ -19,6 +19,11 @@
  * Write-side toolset, one charter-aware tool per kind of article, plus a
  * catch-all for the articles that already exist:
  *   - create_magic_item  a new, hidden item from the Magic Item templates
+ *   - create_spell, create_class, create_subclass, create_feat,
+ *     create_background, create_species
+ *                        player options in the 5.5e rules branch, visible
+ *                        unless asked otherwise (src/wiki/spells.ts,
+ *                        classes.ts, feats.ts and origins.ts)
  *   - edit_page          insert, replace and delete blocks of a page tab
  *
  * The views take an audience: "dm" (everything, concealed layers marked)
@@ -48,6 +53,11 @@ import type { LegendKeeperClient } from "./lk/types";
 import { ResourceIndex } from "./wiki/index";
 import { editPage } from "./wiki/edit";
 import { createMagicItem, ITEM_KINDS, RARITIES, type ItemKind } from "./wiki/items";
+import { CASTERS, createClass, createSubclass, type Caster } from "./wiki/classes";
+import type { Created } from "./wiki/create";
+import { createFeat, FEAT_CATEGORIES, type FeatCategory } from "./wiki/feats";
+import { createBackground, createSpecies } from "./wiki/origins";
+import { createSpell, SCHOOLS } from "./wiki/spells";
 import { articleView, searchView, taggedView, tagsView, templatesView, treeView } from "./wiki/views";
 
 /**
@@ -56,6 +66,50 @@ import { articleView, searchView, taggedView, tagsView, templatesView, treeView 
  * made in the app shows up within a minute.
  */
 const INDEX_TTL_MS = 60_000;
+
+/** What every player-option tool says about its markdown fields. */
+const OPTION_MARKDOWN =
+    "Text fields are markdown: paragraphs, headings (#### for a feature or trait heading, ##### below it), " +
+    "`- ` and `1. ` lists, `> ` quotes, pipe tables (| a | b |, with a | --- | line under the header), " +
+    "**bold**, *italic* (_**Name.**_ for the bold-italic run-in labels rules text uses), links, and mentions " +
+    "of other articles as [Name](lk:resourceId) (find ids with search or get_tree). ";
+
+/** The parameters every player-option tool shares. */
+const playerOption = {
+    tags: z
+        .array(z.string().trim().min(1).max(100))
+        .default([])
+        .describe("Extra tags beyond the ones the tool sets. Check list_tags for existing vocabulary."),
+    hidden: z
+        .boolean()
+        .default(false)
+        .describe(
+            "Player options are created visible, since they are for players to read. true creates it hidden " +
+                "(homebrew still under review, or an option that is itself a spoiler).",
+        ),
+};
+const optionSource = z
+    .string()
+    .trim()
+    .min(1)
+    .max(100)
+    .describe(
+        'Where it comes from, as a tag: "WotC" for official books, the book\'s name for third-party ' +
+            '("Valda\'s Spire of Secrets"), "Homebrew" for the campaign\'s own.',
+    );
+const optionImage = z
+    .string()
+    .url()
+    .regex(/^https?:\/\//, "must be an http(s) URL")
+    .optional()
+    .describe("A web image (JPEG, PNG, GIF or WebP, up to 10 MB). It is copied into LegendKeeper, not hotlinked.");
+const optionParent = z.string().optional().describe("Where to create it, if not its usual 5.5e folder.");
+const casterParam = z
+    .enum(Object.keys(CASTERS) as [Caster, ...Caster[]])
+    .default("none")
+    .describe(
+        'Spellcasting progression, tagged "Spellcaster" plus "Full Caster", "Half Caster", "Third Caster" or "Pact Caster".',
+    );
 
 const audience = z
     .enum(["dm", "player"])
@@ -253,6 +307,228 @@ export class ConvergenceGambitMCP extends McpAgent<Env, Record<string, never>, P
                 }),
         );
 
+        this.server.tool(
+            "create_spell",
+            "WRITES to the wiki: creates a spell article in 5.5e / Spells from the Spell template, with its stats " +
+                "in the template's infobox, and returns it as read_article would. Tags are set for you: Spell, its " +
+                "components, school, classes, Ritual and Concentration. The class tags are what put the spell on " +
+                "each class's Spell List tab, so list every class that can learn it. Feed it the spell as the " +
+                "source prints it: the stat block into the fields, the rest into `description`. " +
+                OPTION_MARKDOWN +
+                "Refuses a name an existing spell already has.",
+            {
+                name: z.string().trim().min(1).max(500),
+                level: z.number().int().min(0).max(9).describe("0 for a cantrip."),
+                school: z.enum(SCHOOLS),
+                classes: z
+                    .array(z.string().trim().min(1).max(100))
+                    .default([])
+                    .describe('Class names whose spell list it is on, e.g. ["Cleric", "Wizard"].'),
+                castingTime: z
+                    .string()
+                    .trim()
+                    .min(1)
+                    .describe('e.g. "Action", "Bonus Action", "1 Minute", "Reaction, which you take when …".'),
+                range: z.string().trim().min(1).describe('Range or area, e.g. "60 feet", "Self (15-foot Cone)", "Touch".'),
+                duration: z
+                    .string()
+                    .trim()
+                    .min(1)
+                    .describe('As printed, e.g. "Instantaneous", "Concentration, up to 1 minute".'),
+                verbal: z.boolean(),
+                somatic: z.boolean(),
+                material: z
+                    .string()
+                    .trim()
+                    .optional()
+                    .describe("The material component's text, if it has one: tags it Material and fills Material Components."),
+                damageEffect: z
+                    .string()
+                    .optional()
+                    .describe('The infobox\'s Damage/Effect, e.g. "2d8 Radiant", "Healing", "Control".'),
+                attackSave: z.string().optional().describe('e.g. "None", "Ranged", "Melee", "DEX Save".'),
+                ritual: z.boolean().default(false),
+                concentration: z.boolean().default(false),
+                description: z.string().trim().min(1).describe("The spell's effect text."),
+                higherLevels: z
+                    .string()
+                    .optional()
+                    .describe('The "Using a Higher-Level Spell Slot" or cantrip-upgrade text, without its label.'),
+                source: optionSource.optional(),
+                ...playerOption,
+                parentId: optionParent,
+            },
+            async (input) => guard(async () => this.created(await createSpell(this.lk, await this.index(), input))),
+        );
+
+        this.server.tool(
+            "create_class",
+            "WRITES to the wiki: creates a class article in 5.5e / Classes and returns it as read_article would. " +
+                "Shape: the class image and core traits in an infobox floated right, the intro, then " +
+                '"### <Class> Class Features" with the features table and every feature. A spellcaster also gets a ' +
+                "Spell List tab gathering every spell tagged with the class (create_spell's `classes`). Tags: Class, " +
+                "the class's name, source, and caster progression. Add subclasses afterwards with create_subclass. " +
+                OPTION_MARKDOWN +
+                "Refuses a name an existing class already has.",
+            {
+                name: z.string().trim().min(1).max(500),
+                source: optionSource,
+                primaryAbility: z.string().trim().min(1),
+                hitPointDie: z.string().trim().min(1).describe('e.g. "D10 per Fighter level".'),
+                savingThrows: z.string().trim().min(1).describe('e.g. "Strength and Constitution".'),
+                skillProficiencies: z.string().trim().min(1).describe('e.g. "Choose 2: Acrobatics, Athletics, …".'),
+                weaponProficiencies: z.string().trim().min(1),
+                toolProficiencies: z.string().optional(),
+                armorTraining: z.string().trim().min(1).describe('e.g. "Light and Medium armor and Shields", or "None".'),
+                startingEquipment: z.string().trim().min(1).describe('e.g. "Choose A or B: (A) …; or (B) 75 GP".'),
+                caster: casterParam,
+                spellList: z.boolean().optional().describe("Add the Spell List tab. Default: yes for a spellcaster."),
+                description: z.string().trim().min(1).describe("The class's introduction, before its features."),
+                featuresTable: z
+                    .string()
+                    .trim()
+                    .min(1)
+                    .describe("The class features table as a pipe table: | Level | PB | Class Features | … |, a row per level."),
+                features: z
+                    .string()
+                    .trim()
+                    .min(1)
+                    .describe(
+                        'Every feature, each as "#### Level N: Feature Name" and its text, in level order. Option lists ' +
+                            "(invocations, formulae) can follow under their own #### headings.",
+                    ),
+                imageUrl: optionImage,
+                ...playerOption,
+                parentId: optionParent,
+            },
+            async (input) => guard(async () => this.created(await createClass(this.lk, await this.index(), input))),
+        );
+
+        this.server.tool(
+            "create_subclass",
+            "WRITES to the wiki: creates a subclass article nested under its class article (which must exist; see " +
+                "create_class) and returns it as read_article would. Shape: an italic tagline quote, the image, the " +
+                "intro, then its features. Tags: Subclass, the class's name, source, and caster progression when the " +
+                "subclass itself grants spellcasting (a third caster such as Eldritch Knight). " +
+                OPTION_MARKDOWN +
+                "Refuses a name the class already has a subclass by.",
+            {
+                name: z.string().trim().min(1).max(500),
+                parentClass: z.string().trim().min(1).describe('The class\'s name (e.g. "Warlock") or its resource id.'),
+                source: optionSource,
+                caster: casterParam,
+                tagline: z
+                    .string()
+                    .optional()
+                    .describe('The one-line flavor heading, e.g. "Unearth Forbidden Lore of Ineffable Beings".'),
+                description: z.string().trim().min(1).describe("The subclass's introduction."),
+                features: z
+                    .string()
+                    .trim()
+                    .min(1)
+                    .describe(
+                        'Every feature, each as "#### Level N: Feature Name" and its text. Always-prepared spells as a pipe table.',
+                    ),
+                imageUrl: optionImage,
+                ...playerOption,
+            },
+            async (input) => guard(async () => this.created(await createSubclass(this.lk, await this.index(), input))),
+        );
+
+        this.server.tool(
+            "create_feat",
+            "WRITES to the wiki: creates a feat article in 5.5e / Feats and returns it as read_article would. It " +
+                "opens with its category and prerequisite in italics, then the benefit text. Tags: Feat, " +
+                '"<Category> Feat" (e.g. Origin Feat), source, and Repeatable. Create an Origin feat before a ' +
+                "background that grants it, so the background can link it. " +
+                OPTION_MARKDOWN +
+                "Refuses a name an existing feat already has.",
+            {
+                name: z.string().trim().min(1).max(500),
+                category: z.enum(Object.keys(FEAT_CATEGORIES) as [FeatCategory, ...FeatCategory[]]),
+                prerequisite: z
+                    .string()
+                    .optional()
+                    .describe('As printed, without "Prerequisite:", e.g. "Level 4+, Strength or Dexterity 13+".'),
+                repeatable: z.boolean().default(false),
+                description: z
+                    .string()
+                    .trim()
+                    .min(1)
+                    .describe("The feat's benefits, e.g. a paragraph per benefit with a _**Name.**_ run-in label."),
+                source: optionSource.optional(),
+                imageUrl: optionImage,
+                ...playerOption,
+                parentId: optionParent,
+            },
+            async (input) => guard(async () => this.created(await createFeat(this.lk, await this.index(), input))),
+        );
+
+        this.server.tool(
+            "create_background",
+            "WRITES to the wiki: creates a background article in 5.5e / Backgrounds from the Background template, " +
+                "filling its Ability Scores, Skill Proficiencies, Feat, Tool Proficiency and Equipment fields, and " +
+                "returns it as read_article would. The Feat field links the feat's article when one has that name " +
+                "(create it first with create_feat). Tags: Background and source. " +
+                OPTION_MARKDOWN +
+                "Refuses a name an existing background already has.",
+            {
+                name: z.string().trim().min(1).max(500),
+                source: optionSource,
+                description: z.string().trim().min(1).describe("The background's flavor text."),
+                details: z
+                    .string()
+                    .optional()
+                    .describe('Anything more, after the description: a feature ("#### Conviction" and its text), a table.'),
+                abilityScores: z
+                    .string()
+                    .trim()
+                    .min(1)
+                    .describe('The three abilities, e.g. "Constitution, Intelligence, Charisma".'),
+                skillProficiencies: z.string().trim().min(1),
+                feat: z.string().trim().min(1).describe('The Origin feat, e.g. "Alert" or "Magic Initiate (Cleric)".'),
+                toolProficiency: z.string().optional(),
+                equipment: z
+                    .string()
+                    .trim()
+                    .min(1)
+                    .describe('A `- ` list, e.g. "- Choose A or B: (A) …; or (B) 50 GP".'),
+                imageUrl: optionImage,
+                ...playerOption,
+                parentId: optionParent,
+            },
+            async (input) => guard(async () => this.created(await createBackground(this.lk, await this.index(), input))),
+        );
+
+        this.server.tool(
+            "create_species",
+            "WRITES to the wiki: creates a species article in 5.5e / Species from the Species template, with Type, " +
+                "Size and Speed in its fields and each trait as its own section, and returns it as read_article would. " +
+                "Tags: Species, the species' name, source and creature type. " +
+                OPTION_MARKDOWN +
+                "Refuses a name an existing species already has.",
+            {
+                name: z.string().trim().min(1).max(500),
+                source: optionSource,
+                description: z.string().trim().min(1).describe("The species' flavor text."),
+                creatureType: z.string().trim().min(1).default("Humanoid"),
+                size: z.string().trim().min(1).describe('e.g. "Medium (about 4–7 feet tall)" or "Small or Medium".'),
+                speed: z.string().trim().min(1).describe('e.g. "30 feet".'),
+                traits: z
+                    .array(
+                        z.object({
+                            name: z.string().trim().min(1).max(200),
+                            description: z.string().trim().min(1),
+                        }),
+                    )
+                    .min(1),
+                imageUrl: optionImage,
+                ...playerOption,
+                parentId: optionParent,
+            },
+            async (input) => guard(async () => this.created(await createSpecies(this.lk, await this.index(), input))),
+        );
+
         const blockId = z.string().min(1).max(256);
         const markdown = z.string().min(1).describe("Markdown, written as read_article prints page text.");
         this.server.tool(
@@ -266,9 +542,10 @@ export class ConvergenceGambitMCP extends McpAgent<Env, Record<string, never>, P
                 "Markdown: paragraphs, headings (### is the page's top level, #### the next), `- ` and `1. ` " +
                 "lists, `> ` quotes (a first line of **Note:**, **Info:**, **Warning:**, **Success:** or " +
                 "**Error:** makes a callout), `---`, **bold**, *italic*, ~~strike~~, `code`, links, and " +
-                "mentions as [Name](lk:resourceId). One markdown may hold several blocks. A list or table " +
-                "has one id: change an item by replacing the whole list. Tables, images and infoboxes can " +
-                "be deleted or left alone, not written. " +
+                "mentions as [Name](lk:resourceId), and pipe tables (| a | b |, with a | --- | line under the " +
+                "header row). One markdown may hold several blocks. A list or table has one id: change an " +
+                "item or a cell by replacing the whole list or table. Images and infoboxes can be deleted " +
+                "or left alone, not written. " +
                 "SECRECY is never read from the text. An insert is secret when placed in or beside the " +
                 "contents of a secret block (give the secret block's id as `parent`), or when `secret` is " +
                 "true, which wraps it in a new secret block; otherwise players can read it. A replace " +
@@ -327,6 +604,17 @@ export class ConvergenceGambitMCP extends McpAgent<Env, Record<string, never>, P
                     return text(`${report}\n\n---\n\n${article}`);
                 }),
         );
+    }
+
+    /** A create tool's answer: anything to know about how it went, then the new article. */
+    private async created({ id, notes }: Created) {
+        // The cached index predates the new article.
+        this.indexCache = undefined;
+        const index = await this.index();
+        const article = await articleView(this.lk, index, id, { audience: "dm" });
+        const visibility = index.isPlayerVisible(id) ? "Players can see it now." : "It is hidden from players.";
+        const list = notes.length ? `\n\nNotes:\n${notes.map((note) => `- ${note}`).join("\n")}` : "";
+        return text(`Created. ${visibility}${list}\n\n${article}`);
     }
 
     /** The shared ResourceIndex, rebuilt after INDEX_TTL_MS or after a failed load. */

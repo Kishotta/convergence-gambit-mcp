@@ -104,6 +104,19 @@ export interface LegendKeeperClient {
      * `templateId` is not a template.
      */
     createFromTemplate(params: { templateId: string; name: string; parentId?: string }): Promise<Resource>;
+    /**
+     * A new resource built from scratch in one request: fields and tabs,
+     * each page tab with its content. Nothing is created if any part is
+     * rejected, so a kind of article with no template is never left half
+     * written. Images in `blocks` must already be assets of the project.
+     */
+    createResource(params: {
+        name: string;
+        parentId?: string;
+        tags?: string[];
+        isHidden?: boolean;
+        documents: { name: string; type: "page"; blocks: Block[] }[];
+    }): Promise<Resource>;
     /** Changes only the fields given. */
     updateResource(resourceId: string, changes: { tags?: string[]; isHidden?: boolean }): Promise<Resource>;
     /**
