@@ -25,15 +25,9 @@
  * as a web URL is downloaded and stored in the asset library first.
  */
 
-import {
-    IMAGE_CONTENT_TYPES,
-    TEMPLATES_ROOT_ID,
-    type Block,
-    type ImageContentType,
-    type LegendKeeperClient,
-    type ResourceListItem,
-} from "../lk/types";
+import { TEMPLATES_ROOT_ID, type Block, type LegendKeeperClient, type ResourceListItem } from "../lk/types";
 import { composeBlocks } from "./compose";
+import { fetchImage } from "./create";
 import type { ResourceIndex } from "./index";
 
 /** The template family and the reference folder, found by name so a recreated template still resolves. */
@@ -43,7 +37,6 @@ const ITEM_TAG = "Magic Item";
 const ATTUNEMENT_TAG = "Requires Attunement";
 /** The asset library folder item images are stored in. */
 const IMAGE_FOLDER = "Magic Items";
-const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
 
 export const ITEM_KINDS = {
     consumable: "Consumable",
@@ -163,26 +156,6 @@ async function writeBody(
 function templateHead(blocks: Block[]): Block[] {
     const placeholder = blocks.findIndex((block) => block.kind === "paragraph");
     return placeholder === -1 ? blocks : blocks.slice(0, placeholder);
-}
-
-async function fetchImage(url: string): Promise<{ data: Uint8Array; contentType: ImageContentType }> {
-    const fail = (why: string) => new Error(`Image ${url} ${why}. Nothing was created.`);
-    let response: Response;
-    try {
-        response = await fetch(url);
-    } catch (err) {
-        throw fail(`could not be fetched (${err instanceof Error ? err.message : String(err)})`);
-    }
-    if (!response.ok) throw fail(`answered ${response.status}`);
-
-    const type = (response.headers.get("content-type") ?? "").split(";")[0].trim().toLowerCase();
-    const contentType = IMAGE_CONTENT_TYPES.find((known) => known === (type === "image/jpg" ? "image/jpeg" : type));
-    if (!contentType) throw fail(`is ${type || "of no declared type"}, not a JPEG, PNG, GIF or WebP image`);
-
-    const data = new Uint8Array(await response.arrayBuffer());
-    if (!data.byteLength) throw fail("is empty");
-    if (data.byteLength > MAX_IMAGE_BYTES) throw fail(`is ${Math.round(data.byteLength / 1024 / 1024)} MB, over the 10 MB limit`);
-    return { data, contentType };
 }
 
 function secret(children: Block[]): Block {

@@ -13,6 +13,9 @@
  *   is `**Info:**`, `**Note:**`, `**Success:**`, `**Warning:**` or
  *   `**Error:**` is a callout of that tone
  * - `---` rules
+ * - pipe tables, one `| a | b |` line per row. A `| --- |` line under the
+ *   first row makes that row the header; `<br>` breaks a cell into
+ *   paragraphs, and `\|` is a literal pipe, as render.ts writes them
  * - `**bold**`, `*italic*` or `_italic_`, `~~strike~~`, `` `code` ``,
  *   `[label](https://…)` links, and mentions as `[Name](lk:resourceId)`
  *
@@ -35,8 +38,11 @@ export function composeBlocks(markdown: string): Block[] {
     /** While `items` holds a numbered list, the number it starts at. */
     let ordered: number | undefined;
     let quoted: string[] = [];
+    let rows: string[] = [];
 
     const flush = () => {
+        if (rows.length) blocks.push(composeTable(rows));
+        rows = [];
         if (quoted.length) blocks.push(composeQuote(quoted));
         quoted = [];
         if (paragraph.length) blocks.push({ kind: "paragraph", content: composeRuns(paragraph.join(" ")) });
@@ -59,8 +65,13 @@ export function composeBlocks(markdown: string): Block[] {
         const bullet = line.match(/^[-*]\s+(.*)$/);
         const numbered = line.match(/^(\d+)[.)]\s+(.*)$/);
         const quote = line.match(/^>\s?(.*)$/);
+        const row = line.startsWith("|");
+        if (rows.length && !row) flush();
         if (!line) flush();
-        else if (/^(-{3,}|\*{3,})$/.test(line)) {
+        else if (row) {
+            if (paragraph.length || items.length || quoted.length) flush();
+            rows.push(line);
+        } else if (/^(-{3,}|\*{3,})$/.test(line)) {
             flush();
             blocks.push({ kind: "rule" });
         } else if (heading) {
@@ -89,6 +100,39 @@ export function composeBlocks(markdown: string): Block[] {
     }
     flush();
     return blocks;
+}
+
+/** A row of only dashes, colons and pipes: the line under a table's header. */
+const TABLE_RULE = /^\|?(\s*:?-{3,}:?\s*\|)*\s*:?-{3,}:?\s*\|?$/;
+
+function composeTable(lines: string[]): Block {
+    const headed = lines.length > 1 && TABLE_RULE.test(lines[1]);
+    const rows = lines.filter((line, i) => !(headed && i === 1)).map(tableCells);
+    const width = Math.max(...rows.map((cells) => cells.length));
+    return {
+        kind: "table",
+        children: rows.map((cells, r): Block => ({
+            kind: "tableRow",
+            children: [...cells, ...Array<string>(width - cells.length).fill("")].map(
+                (cell): Block => ({
+                    kind: "tableCell",
+                    ...(headed && r === 0 ? { header: true } : {}),
+                    children: cell
+                        .split(/\s*<br\s*\/?>\s*/i)
+                        .map((part): Block => ({ kind: "paragraph", content: part ? composeRuns(part) : [] })),
+                }),
+            ),
+        })),
+    };
+}
+
+/** A row's cells: split on pipes that aren't escaped, without the outer ones. */
+function tableCells(line: string): string[] {
+    return line
+        .replace(/^\|/, "")
+        .replace(/(?<!\\)\|$/, "")
+        .split(/(?<!\\)\|/)
+        .map((cell) => cell.trim().replace(/\\\|/g, "|"));
 }
 
 function composeQuote(lines: string[]): Block {

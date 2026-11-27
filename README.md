@@ -36,12 +36,27 @@ accepted leak".
 | Tool                | Purpose                                                                 |
 | ------------------- | ----------------------------------------------------------------------- |
 | `create_magic_item` | A new, hidden item article from the Magic Item templates, populated.    |
+| `create_spell`      | A spell in 5.5e / Spells, tagged with its classes so it joins their Spell Lists. |
+| `create_class`      | A class in 5.5e / Classes: infobox, features table, features, Spell List tab. |
+| `create_subclass`   | A subclass nested under its class article.                              |
+| `create_feat`       | A feat in 5.5e / Feats, tagged by category (Origin Feat, General Feat …). |
+| `create_background` | A background from the Background template, linking its Origin feat.    |
+| `create_species`    | A species from the Species template, one section per trait.            |
 | `edit_page`         | Insert, replace and delete blocks in one page tab of an existing article. |
 
 The create tools are specific on purpose: each knows one kind of article,
 its template, its tags and where its content goes. `create_magic_item` puts
 mechanics in a secret block for anything above Common, since the party has
 to identify those first.
+
+The player-option tools (`create_spell` through `create_species`) take
+markdown as the source prints it and file it under the `5.5e` branch. Unlike
+items they are created **visible**, since they exist for players to read;
+`hidden: true` holds one back. Tags carry the integration: a spell tagged
+`Cleric` appears on the Cleric's Spell List tab, which is a live tag
+collection. Spells, backgrounds and species are copied from their
+templates and filled field by field; classes, subclasses and feats have no
+template, so each is written whole in a single request.
 
 `edit_page` is the catch-all for articles that already exist, for bringing
 a stale or half-filled one in line with newer notes. Read the tab first
@@ -222,9 +237,10 @@ To exercise the cron locally, with `npm run dev` already running:
    SDK, plus the read tools above. Needs `npx wrangler secret put LK_API_KEY`
    (an ADMIN-role project key; `LK_PROJECT_ID` optional).
 5. **Charter-aware write tools** _(started)_ — `create_magic_item`, the
-   block-level `edit_page` and a small markdown→blocks converter
-   (`src/wiki/compose.ts`) exist. `edit_page` does not yet move blocks or
-   write tables, images or infobox rows. Still to come: `create_npc_article`, `create_location_article`, `stage_reveal`.
+   six player-option tools, the block-level `edit_page` and a small
+   markdown→blocks converter (`src/wiki/compose.ts`, tables included)
+   exist. `edit_page` does not yet move blocks or write images or
+   infobox rows. Still to come: `create_npc_article`, `create_location_article`, `stage_reveal`.
    Designed from real usage of the tools so far.
 
 ## What the real API answered

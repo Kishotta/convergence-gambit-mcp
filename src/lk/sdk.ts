@@ -129,6 +129,16 @@ export class SdkLegendKeeperClient implements LegendKeeperClient {
         );
     }
 
+    async createResource(params: {
+        name: string;
+        parentId?: string;
+        tags?: string[];
+        isHidden?: boolean;
+        documents: { name: string; type: "page"; blocks: Block[] }[];
+    }): Promise<Resource> {
+        return this.call(() => this.lk.resources.create({ projectId: this.projectId }, params));
+    }
+
     async updateResource(
         resourceId: string,
         changes: { tags?: string[]; isHidden?: boolean },
